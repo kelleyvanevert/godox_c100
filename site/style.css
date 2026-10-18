@@ -361,7 +361,7 @@ dialog button {
 }
 
 .editor h3 {
-  font: 15px/1.2 var(--pixel);
+  font: 20px/1.2 var(--pixel);
   text-transform: uppercase;
   margin: 0 0 10px;
 }
@@ -398,8 +398,149 @@ dialog button {
   opacity: 0.4;
 }
 
-.editor-grid {
+/* dithering */
+
+.ed-dithers {
   margin-top: 2em;
+}
+
+.ed-dlist {
+  list-style: none;
+  padding: 0 3px 3px 0;
+  margin: 12px 0 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 10px;
+  user-select: none;
+}
+
+.ed-dither {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 6px 8px;
+  padding: 6px 8px 8px;
+  border: 2px solid var(--ink);
+  background: var(--paper);
+  box-shadow: 3px 3px 0 var(--ink); /* on: as the page's cards */
+  cursor: pointer;
+}
+
+/* rnd: only its checkbox does anything */
+.ed-dither.rnd {
+  cursor: default;
+}
+
+.ed-dither.rnd:hover {
+  background: var(--paper);
+}
+
+.ed-dither:hover {
+  background: #f1f1f1;
+}
+
+.ed-dither:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
+}
+
+.ed-dither input {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--ink);
+  margin: 0;
+  cursor: pointer;
+}
+
+/* off: flat, dashed and faded, so the ones on the camera stand out */
+.ed-dither.off {
+  border: 2px dashed #b5b5b5;
+  box-shadow: none;
+}
+
+.ed-dither.off .ed-dname,
+.ed-dither.off .ed-dbody {
+  opacity: 0.35;
+}
+
+.ed-dither.sel.off {
+  border: 2px solid var(--ink);
+}
+
+.ed-dither.sel.off .ed-dname {
+  opacity: 1;
+}
+
+.ed-dither.sel.off .ed-dbody {
+  opacity: 0.6;
+}
+
+.ed-dname {
+  justify-self: start;
+  max-width: 100%;
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding: 0 5px;
+  margin-left: -5px;
+}
+
+/* the previewed one: just its name, white on black */
+.ed-dither.sel .ed-dname {
+  background: var(--ink);
+  color: var(--paper);
+}
+
+.ed-dbody {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: stretch;
+  gap: 10px;
+}
+
+.ed-dmap {
+  display: block;
+  flex: none;
+  width: 48px;
+  height: 48px;
+  image-rendering: pixelated;
+  outline: 1px solid var(--ink);
+}
+
+.ed-drnd {
+  outline: 0;
+  font-size: 12px;
+  line-height: 1.3;
+  color: var(--muted);
+  width: auto;
+  flex: 1;
+}
+
+.ed-dside {
+  margin-left: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  justify-content: space-between;
+}
+
+.ed-dtag {
+  display: block;
+  image-rendering: pixelated;
+}
+
+.ed-dside .ed-lcd-ro .seg7 {
+  width: 11px;
+  height: 15px;
+}
+
+.editor .ed-lcd-ro {
+  cursor: inherit;
+}
+
+.editor-grid {
+  margin-top: 2.5em;
   display: grid;
   grid-template-columns: minmax(250px, 320px) minmax(0, 1fr);
   align-items: start;
@@ -618,6 +759,56 @@ dialog button {
   .ed-work-body {
     padding: 12px;
   }
+}
+
+/* the preview: all nine in a grid, or one large with a strip */
+
+.ed-view {
+  display: inline-flex;
+  margin-bottom: 10px;
+}
+
+.editor .ed-view button {
+  font-size: 13px;
+  padding: 3px 10px;
+}
+
+.editor .ed-view button + button {
+  border-left: 0;
+}
+
+.editor .ed-view button[aria-pressed="true"] {
+  background: var(--ink);
+  color: var(--paper);
+}
+
+.ed-big {
+  display: none;
+  margin-bottom: 8px;
+}
+
+.ed-shots.detail .ed-big {
+  display: block;
+}
+
+.ed-shots.detail .ed-photos {
+  grid-template-columns: repeat(9, minmax(0, 1fr));
+  gap: 6px;
+  padding: 0 0 5px;
+}
+
+.ed-shots.detail .ed-photos .ed-photo canvas {
+  cursor: pointer;
+  image-rendering: auto;
+}
+
+.ed-shots.detail .ed-photos figcaption {
+  display: none;
+}
+
+.ed-shots.detail .ed-photo.big {
+  outline: 3px solid var(--ink);
+  outline-offset: 2px;
 }
 
 .ed-photos {
@@ -922,7 +1113,6 @@ dialog button {
 }
 
 .editor .ed-sounds-head h3 {
-  font-size: 20px;
   margin: 0;
 }
 

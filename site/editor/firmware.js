@@ -104,15 +104,15 @@ export function lcdNibbles(m, segments) {
 export function configErrors(m, cfg) {
   const errors = [];
   const n = cfg.presets.length;
-  if (n < 1) errors.push("Turn on at least one preset.");
-  if (n > m.maxPresets) errors.push(`At most ${m.maxPresets} presets fit; ${n} are on.`);
+  if (n < 1) errors.push("Turn on at least one palette.");
+  if (n > m.maxPresets) errors.push(`At most ${m.maxPresets} palettes fit; ${n} are on.`);
   const seen = new Set();
   for (const p of cfg.presets) {
     const name = p.tag || "(no tag)";
-    if (!p.tag) errors.push("Every preset needs a tag.");
+    if (!p.tag) errors.push("Every palette needs a tag.");
     else if ([...p.tag].some((ch) => !m.font[ch])) errors.push(`${name}: the tag font has no "${[...p.tag].find((ch) => !m.font[ch])}".`);
     else if (p.tag.length > m.tag.letters || tagWidth(m, p.tag) > m.tag.cols) errors.push(`${name}: the tag is too wide.`);
-    if (seen.has(p.tag)) errors.push(`Two presets are tagged ${name}.`);
+    if (seen.has(p.tag)) errors.push(`Two palettes are tagged ${name}.`);
     seen.add(p.tag);
     if (p.match.length < 1 || p.match.length > m.maxColours) errors.push(`${name}: 1 to ${m.maxColours} colours.`);
     if (p.paint.length !== p.match.length) errors.push(`${name}: paint and match colours differ in number.`);

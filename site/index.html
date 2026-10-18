@@ -161,19 +161,25 @@
         <header class="editor-head">
           <h2 id="editor-title">Make your own</h2>
           <p>
-            Create up to <span id="ed-max">8</span> palettes, choose the sounds you want (or turn them off),
-            then download your custom firmware and flash it the same way as described above.
+            Pick the dithering algorithms you want, create up to <span id="ed-max">8</span> palettes, and choose the sounds you want
+            (or turn them off), then download your custom firmware and flash it the same way as described above.
+            Select a dithering algorithm or palette to preview/edit it.
           </p>
         </header>
 
+        <div class="ed-dithers">
+          <h3>Dithering <span class="ed-count" id="ed-dcount"></span></h3>
+          <ol class="ed-dlist" id="ed-dlist"></ol>
+        </div>
+
         <div class="editor-grid">
-          <aside class="ed-presets" aria-label="Presets">
-            <h3>Presets <span class="ed-count" id="ed-count"></span></h3>
+          <aside class="ed-presets" aria-label="Palettes">
+            <h3>Palettes <span class="ed-count" id="ed-count"></span></h3>
             <ol class="ed-list" id="ed-list"></ol>
             <label class="ed-check ed-rnd">
               <input type="checkbox" id="ed-rnd" />
               <img class="cam-tag" src="img/tags/rnd.png" width="39" height="21" alt="rnd" />
-              also a random preset per photo
+              also a random palette per photo
             </label>
           </aside>
 
@@ -181,14 +187,21 @@
             <div class="ed-work-head" id="ed-work-head"></div>
             <div class="ed-work-body">
               <div class="ed-preview">
-                <div class="ed-photos" id="ed-photos"></div>
+                <div class="ed-view" role="group" aria-label="Preview layout">
+                  <button type="button" data-view="grid" aria-pressed="true">All nine</button>
+                  <button type="button" data-view="detail" aria-pressed="false">One large</button>
+                </div>
+                <div class="ed-shots" id="ed-shots">
+                  <div class="ed-big" id="ed-big"></div>
+                  <div class="ed-photos" id="ed-photos"></div>
+                </div>
                 <p class="note">
                   Hover a photo to see the original, or click on it to inspect it at a larger size.
                   You can also drop your own pictures in the grid to preview them.
                   (Your pictures stay on your computer, by the way.)
                 </p>
               </div>
-              <div class="ed-palette" id="ed-palette" aria-label="Selected preset"></div>
+              <div class="ed-palette" id="ed-palette" aria-label="Selected palette"></div>
             </div>
           </div>
         </div>

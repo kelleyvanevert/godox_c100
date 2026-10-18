@@ -37,6 +37,7 @@ small resolution, a limited colour palette, and dithering.
 | Video at the photo sizes (hook takes any width up to `MAX_W`) | on the camera, working (`v020`) |
 | Preset data in fixed slots (8 presets × 32 colours), preset count and rnd patchable | on the camera, working (`v021`) |
 | [Site editor](#the-sites-firmware-editor) builds: own presets, S-curve, films, tags, display codes, rnd, sounds | on the camera, working (2026-10-18: photos, video, sounds, palettes) |
+| [Dithering as a setting](#dithering-algorithms): 16 algorithms + random, left arrow, ISO digits, photo tag | editor preview only (branch `dithering-algorithms`); feasibility estimated, not measured |
 | Table kept when the preset doesn't change (no ~60 ms fill before the capture) | built (`v015`), emulator |
 
 Open: [repeated frames](#timing-and-headroom) in some dithered videos.
@@ -44,7 +45,7 @@ Open: [repeated frames](#timing-and-headroom) in some dithered videos.
 Contents: [The device](#the-device) · [Image layout](#firmware-image-layout-gp_cardvr_upgradebin-v116) ·
 [Tooling](#tooling) · [Backups](#backups-in-build_backups) · [Code caves and hooks](#code-caves-and-hooks) ·
 [Photos](#photos) · [Palettes](#palettes) · [Presets](#presets) · [Video](#video) · [Sounds](#sounds) ·
-[Site editor](#the-sites-firmware-editor) · [Look knobs](#look-knobs-contrast--brightness) · [UI graphics](#ui-graphics-gpzp-logos-and-the-osd-overlay) ·
+[Site editor](#the-sites-firmware-editor) · [Dithering algorithms](#dithering-algorithms) · [Look knobs](#look-knobs-contrast--brightness) · [UI graphics](#ui-graphics-gpzp-logos-and-the-osd-overlay) ·
 [History](#history-the-v1-effect) · [Ideas](#ideas-not-yet-done) · [Palette colours](#appendix-palette-colours)
 
 ## The device
@@ -759,7 +760,8 @@ checked against its sha256) instead of assembling:
 
 `site/editor/template.json` lists every offset, read from the assembled caves
 by `editor_data.py`. `firmware.js` is the patcher (no DOM, runs in Node),
-`sim.js` the preview (the camera's table and Bayer, as `sim_palette.py`),
+`sim.js` the preview (the camera's table and Bayer, as `sim_palette.py`, and
+the other [dithering algorithms](#dithering-algorithms) from `dithers.js`),
 `editor.js` the UI (state in localStorage).
 
 **Verified (2026-10-18):** `editor_check.sh` (16 random configs: 1–8 presets
@@ -770,6 +772,194 @@ presets, one with an edited palette through Kodachrome 64). The emulator
 tests pass on the default template, on 8 presets of up to 32 colours and on
 the downloaded config. With one preset rnd can only repeat it, so the editor
 offers rnd from two presets on.
+
+### Dithering algorithms
+
+**Planned, not on the camera yet** (2026-10-18, branch
+`dithering-algorithms`; tentative, to come back to): the dithering becomes a
+setting of its own, next to the palette, for all palettes alike. The editor
+previews all of them (`dithers.js`, `sim.js`); the firmware still does Bayer
+4x4 only, and an editor download ignores the dithering choice.
+
+- **Buttons, remapped:** left arrow cycles the dithering (the ones the editor
+  turned on, then random if on), center cycles the aspect ratio, right arrow
+  cycles the palette (today the center button does that, and the arrows the
+  aspect, -1/+1).
+- **Display:** the dithering on the two ISO digits (bottom left), the palette
+  on the SS digits as now. The ISO readout has only two real digits: its
+  "third and fourth" are the fixed `0` segments `03.0` and `05.0` (plus the
+  `ISO` label `00.0`/`02.0`), all blank in photo and video mode, so ours. The
+  F readout (2 digits, decimal point `09.2`, label `06.1`/`06.2`) is blank and
+  free too. Segment wiring, found by running the digit routines for 0–9 in
+  the emulator (as the SS cells were):
+
+  | Cell | a | b | c | d | e | f | g |
+  |---|---|---|---|---|---|---|---|
+  | ISO 1 (`FUN_00049ea8`, args 0,1,2) | `01.0` | `02.1` | `02.2` | `01.2` | `00.2` | `00.1` | `01.1` |
+  | ISO 2 (`FUN_00049ea8`, args 3,4,5) | `04.0` | `05.1` | `05.2` | `04.2` | `03.2` | `03.1` | `04.1` |
+  | F 1 (`FUN_0004a4ec`) | `07.0` | `08.0` | `09.1` | `08.2` | `07.2` | `07.1` | `08.1` |
+  | F 2 (`FUN_0004a074`, args 9,a,b) | `0a.0` | `0b.0` | `0b.1` | `0b.2` | `0a.2` | `09.0` | `0a.1` |
+
+  Addresses `0x00`–`0x05` hold only the ISO segments, so the ISO code can be
+  written as six whole nibbles, as `lcd_hook` does for SS. Random shows `rn`.
+- **Photo tag:** the dithering's two-letter code, one font cell left of the
+  palette's tag (outline to outline). The camera's palette tags are drawn
+  right-aligned in a 13-cell field, so `draw_tag` needs each tag's real width
+  (a byte per palette) to place it. Two extra glyphs (`≡`, `/`) beyond the tag
+  font.
+- **Editor:** a Dithering section above Palettes: a card per dithering (its
+  threshold map, error-diffusion kernel or curve; photo tag; display code),
+  each on or off, plus Random (only on or off). The selected one is
+  previewed. Defaults: Bayer 4x4, Colour Bayer 4x4, Floyd–Steinberg, Atkinson
+  and random. The preview can show all nine photos or one large with a strip.
+
+**Open decisions** (nothing settled yet):
+
+- Which to keep: 16 is too many to cycle with one button.
+- The codes, e.g. whether `≡≡` and `//` read well enough (`//` is only a rough
+  slash on 7 segments).
+- Fixed order, or reorderable as the palettes are; the camera starts on the
+  first one that's on.
+- Blue noise 16x16 (repeats every 32 px) or 32x32 (1 KB).
+- Error diffusion on video: fall back to Bayer 4x4 (proposed below), or not
+  offer those at all.
+
+**Next steps** before any firmware: measure the photo strip deadline (a
+diagnostic build padding the hook with a growing busy loop, until the bottom
+of the photo turns to noise; the left arrow could step through the delays in
+one build), and assemble Floyd–Steinberg and count it in the emulator
+(`emu_cave.py`), to check the estimates below; then find code space (below).
+
+They all work on the camera's 2x2 blocks, as the Bayer does.
+
+| Algorithm | Code | Kind | ~instr/block | Photo | Video |
+|---|---|---|---|---|---|
+| None, Bayer 2x2 / 4x4 / 8x8, Lines, Diagonal, Blue noise (16x16) | `--` `B2` `B4` `B8` `≡≡` `//` `BN` | threshold map: luma offset, -32 up | 66 (as now) | yes | yes |
+| Colour Bayer 4x4 / 8x8, Colour blue noise | `C4` `C8` `CN` | colour mix | ~70 | yes | yes |
+| Sierra Lite | `SL` | error diffusion | ~100 | yes | maybe; shimmers |
+| Floyd–Steinberg, Atkinson | `FS` `AT` | error diffusion | ~115 | yes | unlikely; shimmers |
+| Riemersma | `RI` | error diffusion along a Hilbert curve | ~125 | yes (just) | no |
+| Jarvis–Judice–Ninke | `JN` | error diffusion, 3 rows | ~190 | unknown: past what's proven | no |
+| Even toned | `ET` | error diffusion + distance feedback | ~190 | unknown: past what's proven | no |
+
+**Feasibility (2026-10-18, estimates).** Instruction counts per 2x2 block
+are estimated from the current loop (66, counted in the emulator) plus each
+algorithm's extra work, written as tight ARM as we'd write it (errors as int16
+row buffers, the right neighbour's error in a register, the match colour
+loaded for the error). Not yet assembled or counted. The budgets:
+
+- *Photo* (interrupt, per-strip deadline, real limit unmeasured): the v1
+  effect ran 147 instructions per block at 640 wide (`v008`) and worked: ~1.5M
+  per 64-row strip, so **~134 per block at 704 wide** is proven. Beyond that
+  is unknown until measured: a diagnostic build that pads the hook with a
+  growing busy loop (until the bottom of the photo turns to noise) would find
+  the real deadline. JJN and Even toned need that first.
+- *Video* (camera task, 33.3 ms per frame, ≤ ~79k blocks per frame at the
+  `v020` sizes): the most proven is 640x640 at 65% of the frame (6.8M
+  instructions), **~86 per block**; the ceiling is perhaps ~118 (~90% of the
+  frame), unproven, and the repeated-frames issue suggests the margin isn't
+  free. Optimising the base loop (word loads/stores, fewer branches) could win
+  maybe 15–20 per block for everything.
+- *Video also argues against error diffusion regardless of time:* its grain
+  moves every frame, which shimmers, and makes the H.264 stream much harder to
+  compress, while dithered video's bitrate is already the
+  [suspected cause](#timing-and-headroom) of the repeated frames. An ordered
+  dither stays put wherever the scene does. So: video uses the chosen dither
+  when it's a threshold map or colour mix, and falls back to Bayer 4x4 otherwise; the video tag shows what it used.
+- *Colour mix tables:* the fill also finds the 6 nearest colours and tries 15
+  pairs per bin (with each pair's 1/|a-b|² precomputed, no division): roughly
+  40M instructions, **~130 ms** instead of 50–70 ms, only when the palette or
+  the kind of table changes. 72 KB instead of 36 KB from `pvPortMalloc`
+  (whether the heap has it is untested). Video: the first strip's fill drops a
+  few more frames at the start of a recording.
+- *Code space* is the other limit: about 600 B free in each of the photo,
+  video and display caves. The maps are data (4–256 B each, ~420 B all
+  together), but every error-diffusion loop is a few hundred bytes, and today
+  the photo and video hooks each have their own copy of the loop. Doing more
+  than the maps and colour mix needs one shared strip routine (photo and
+  video strips have the same layout) and more dead code found (candidates:
+  the TFT driver and the OSD compositor, see
+  [What the old notes got wrong](#ui-graphics-gpzp-logos-and-the-osd-overlay)).
+- Error rows carry across strips: photo strips arrive in order, video strips
+  top to bottom per frame (from a pool, but in order), so a few KB of row
+  buffers is all it takes. Riemersma's Hilbert curve runs through 32x32-block
+  tiles, one strip high.
+
+- **Threshold maps.** The camera's own kind: the block's luma plus the map's
+  offset at its spot, then the table. Offsets run from -32 up in 64/n steps
+  for n levels, so Bayer 4x4 is exactly `(B - 8) * 4`. Maps are at most 32
+  rows, so they tile the 32-block (64-row) strips without seams.
+- **Colour mix** (palette-aware ordered dithering, a cheap
+  [Yliluoma](https://bisqwit.iki.fi/story/howto/dither/jy/)): the plain kind
+  only dithers light against dark, so a hue between two palette colours turns
+  into grey or brown speckle. Here every table bin holds a pair of match
+  colours a, b and the share t of b whose mix comes closest to the bin's
+  colour, counting the mix's grain t(1-t)|a-b|² against it (x 0.08), so
+  far-apart colours only mix when nothing nearer does; only pairs among the
+  6 nearest colours are tried. A block gets b where the map's threshold is
+  under t, else a. Clearly better with small palettes (6FP keeps its pinks
+  and greens); with BW a little flatter than the plain Bayer, as BW's greys
+  were made one Bayer step apart. Camera: a, b, t in 2 bytes per bin (72 KB
+  instead of 36 KB), a longer table fill; per block the same work.
+- **Error diffusion** (all in Y, U and V, the error against the match colour
+  the block got): Floyd–Steinberg (7 3 5 1 /16), Sierra Lite (2 1 1 /4,
+  the cheapest: 3 neighbours), Jarvis–Judice–Ninke (12 neighbours over 3 rows,
+  /48: smoother, less wormy, ~3x FS's work), Atkinson (6 neighbours x 1/8,
+  only 3/4 of the error passed on: the classic Mac look, more contrast).
+  (Sierra, 3 rows /32, was dropped: too close to Sierra Lite for its cost.)
+  The most faithful colours of all. On the camera: rows top to bottom as the
+  strips arrive, with the error rows carried from strip to strip; photos
+  should be fine, but the per-strip time (now ~2.2 ms) has to be measured
+  against the strip deadline. Video: it shimmers (no fixed pattern, so the
+  grain moves every frame) and there is
+  [headroom](#timing-and-headroom) for maybe 2x the work at 16:9 and 1.5x at
+  1:1: FS / Sierra Lite might fit, JJN not.
+- **Even toned:** after Raph Levien's
+  [Even Toned Screening](https://levien.com/artofcode/eventone/) (his page
+  gives no formulas; this is the idea, tuned by eye): Floyd–Steinberg, but
+  each block also knows how far the nearest earlier "dark dot" and "light
+  dot" are (an offset vector per column, from the left neighbour and the row
+  above), and leans darker by 5 luma per block of distance to the last dark
+  dot minus the distance to the last light one (capped at 8). The error is
+  still against the unbiased colour, so the tone stays. A dot is a block that
+  came out darker / lighter than its own nearest palette colour, i.e. the
+  minority between two palette colours (taking any block darker / lighter
+  than asked made it identical to FS: with 5 greys almost every block is).
+  Subtle by design: sparse dots in highlights and shadows space evenly
+  instead of forming FS's worms.
+- **Riemersma:** error diffusion along a Hilbert curve; each block gets the
+  last 16 errors, weighted 1 (oldest) to 16 (newest), over 16. No directional
+  artefacts. The textbook version runs one curve over the whole image; the
+  camera only sees 32-block strips, so the curve runs through 32x32-block
+  tiles, left to right, carrying the history from tile to tile (the preview
+  does the same).
+
+**Honourable mention: Teddy-Beau** (diid's "Untitled",
+[cada.art](https://www.cada.art/columns/untitled), source
+[gen.js](https://untitled.cada.art/gen.js), CC0). Reimplemented in
+`tools/teddy_beau.mjs`, for use elsewhere; not on the camera.
+
+- *How it works:* blur a little; make 9 versions of the photo: the grey at
+  exposures 0, +0.1, -0.1 (`px + px * e`), and 6 channel mixes (one channel at
+  1 - 2d, the other two at d, d = 0.1 and 0.3); dither each with diid's
+  clustered 8x8 pattern of 18 levels (after stretching its min..max to the
+  full range), which repeats recognisable little motifs; then fuse them one
+  by one: per pixel keep the version whose dithered result has the most
+  local contrast (absolute 9x9 Laplacian of Gaussian, centre -10) times its
+  well-exposedness (a Gaussian around mid grey, sd 0.2). Two tones out
+  (gen.js: light blue `#7e8ffa` on `#2f2f2f`). Strong edges, details kept,
+  the patterns as texture; few true mid-tones. (gen.js's grey is the blue
+  channel; ours is the luma.)
+- *Colour version* (ours): the two-tone result as a nudge instead of the
+  answer: luma +28 where it's light, -32 where it's dark, then the nearest
+  palette colour, as the threshold maps do. The palette keeps the colours,
+  Teddy-Beau's motifs and edges come through as texture. Good with 6FP.
+- *Why not on the camera:* it needs the whole frame before the first strip
+  goes out (the min..max stretch, the 9x9 window across strip edges, 20
+  fuse passes over 9 versions), and photos pass through in 32-row strips under
+  a per-strip deadline. On the camera that would take a two-pass capture
+  (keep the whole frame, then write), and likely seconds of work per photo (~150 ms
+  in a desktop browser at 304x228 blocks, at least 10x that on the camera). Video: no.
 
 ## Video
 
@@ -1244,6 +1434,8 @@ palettes, brightness-weighted matching and a random palette per photo (see
 
 ## Ideas not yet done
 
+- [Dithering as its own setting](#dithering-algorithms), with the buttons
+  remapped: decide the set, measure the photo deadline, then the firmware.
 - Find the cause of the repeated frames in some dithered videos (bitrate?).
 - Speed up the per-block loop (word loads/stores, fewer branches), if a richer
   video effect needs the time.

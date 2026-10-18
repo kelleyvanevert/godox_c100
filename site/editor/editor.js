@@ -1,9 +1,11 @@
-// The firmware editor: 8 preset slots (palette, S-curve, film, tag, display code), each
-// on or off, rnd and sounds; previewed on four photos, kept in localStorage,
-// and built into a firmware in the browser (firmware.js) from the template.
+// The firmware editor: the dithers to cycle through (and rnd), 8 preset slots
+// (palette, S-curve, film, tag, display code), each on or off, rnd and sounds;
+// previewed on nine photos, kept in localStorage, and built into a firmware in
+// the browser (firmware.js) from the template.
 import { buildFirmware, configErrors, encodeWav, hexToYuv, sha256, slotSamples, tagCells, tagColours, tagWidth, yuvToHex, yuvToRgb } from "./firmware.js";
 import { paintColours } from "./films.js";
-import { buildLut, cameraFrame, render } from "./sim.js";
+import { DITHERS, RND_LCD, ditherById, hilbert } from "./dithers.js";
+import { buildLut, cameraFrame, ditherTagCells, render } from "./sim.js";
 
 const STORE = "c100-editor-v2";
 // a 3 x 3 grid: streets, natural, close-ups
@@ -18,6 +20,9 @@ const DEFAULT_SLOTS = [
 const SOUND_PRESETS = { stock: "Stock", mario: "Super Mario" };
 const SOUND_LABELS = { shutter: "Shutter", poweron: "Power-on" };
 const SEGS = "abcdefg";
+// on at the start: the camera's own 4x4 Bayer and a few that look different
+const DEFAULT_DITHERS = ["bayer4", "mix4", "fs", "atkinson"];
+const defaultDithers = () => DITHERS.map((d) => ({ id: d.id, on: DEFAULT_DITHERS.includes(d.id) }));
 
 // The usual 7-segment letters, one cell each (M and W as well as can be).
 const SEG7 = {
@@ -67,11 +72,16 @@ function defaultState() {
     slotFrom(library.palettes.find((l) => l.name === name) ?? library.palettes[i], i < 3),
   );
   return {
+    dithers: defaultDithers(),
+    ditherSel: "bayer4", // the previewed dither
+    ditherRnd: true,
     slots,
     selected: slots[0].id,
     rnd: true,
     sounds: { on: false, shutter: { src: "stock" }, poweron: { src: "stock" } },
     photos: noPhotos(),
+    view: "grid", // or "detail": one photo large, all of them in a strip below
+    big: 0, // the large one
   };
 }
 
@@ -86,6 +96,16 @@ function load() {
       }
       // the preview photos changed: own photos don't carry over
       if (saved.photos?.length !== PHOTOS.length) saved.photos = noPhotos();
+      // from before the dithers (and the dither list changed): the defaults
+      const ids = saved.dithers?.map((d) => d.id).join();
+      if (ids !== DITHERS.map((d) => d.id).join()) {
+        saved.dithers = defaultDithers();
+        saved.ditherSel = "bayer4";
+        saved.ditherRnd = true;
+      }
+      if (!DITHERS.some((d) => d.id === saved.ditherSel)) saved.ditherSel = "bayer4";
+      saved.view ??= "grid";
+      saved.big ??= 0;
       return saved;
     }
   } catch {}
@@ -109,6 +129,8 @@ function save() {
 
 const current = () => state.slots.find((p) => p.id === state.selected) ?? state.slots[0];
 const enabled = () => state.slots.filter((p) => p.on);
+const dithersOn = () => state.dithers.filter((d) => d.on).map((d) => ditherById(d.id));
+const ditherRndOn = () => state.ditherRnd && dithersOn().length > 1;
 const film = (p) => library.films.find((f) => f.id === p.film) ?? null;
 
 async function paintOf(p) {
@@ -124,6 +146,8 @@ async function config() {
       on.map(async (p) => ({ tag: p.tag, match: p.colours, paint: await paintOf(p), lcd: p.lcd })),
     ),
     rnd: state.rnd && on.length > 1,
+    dithers: dithersOn().map((d) => ({ code: d.code, lcd: d.lcd, w: d.w, h: d.h, offsets: [...d.offsets] })),
+    ditherRnd: ditherRndOn(),
     sounds: state.sounds.on,
   };
 }
@@ -175,6 +199,147 @@ function hoverSeg(e) {
   const at = e.type === "mouseleave" ? null : segAt(e);
   for (const r of document.querySelectorAll("#ed-lcd .seg.hover")) r.classList.remove("hover");
   if (at) at.svg.querySelector(`[data-seg="${at.seg}"]`).classList.add("hover");
+}
+
+// ---- dithering ----
+
+const previewDither = () => ditherById(state.ditherSel);
+
+// The threshold map, tiled to a square: a cell's grey is its level. For error
+// diffusion, the kernel: the block in black, where its error goes in greys;
+// for Riemersma, the curve its error follows.
+function drawDitherMap(canvas, d) {
+  if (d.kind === "diffuse") return drawKernel(canvas, d);
+  if (d.kind === "riemersma") return drawCurve(canvas);
+  const n = Math.max(d.w, d.h);
+  canvas.width = canvas.height = n;
+  const ctx = canvas.getContext("2d");
+  const img = ctx.createImageData(n, n);
+  for (let y = 0; y < n; y++)
+    for (let x = 0; x < n; x++) {
+      const l = d.levels[(y % d.h) * d.w + (x % d.w)];
+      const g = d.n < 2 ? 128 : Math.round((l / (d.n - 1)) * 255);
+      img.data.set([g, g, g, 255], (y * n + x) * 4);
+    }
+  ctx.putImageData(img, 0, 0);
+}
+
+function drawKernel(canvas, d) {
+  const n = 5; // dx -2..2, dy 0..2, centred
+  canvas.width = canvas.height = n;
+  const ctx = canvas.getContext("2d");
+  ctx.fillStyle = "#fff";
+  ctx.fillRect(0, 0, n, n);
+  const most = Math.max(...d.kernel.map(([, , w]) => w));
+  for (const [dx, dy, w] of d.kernel) {
+    const g = Math.round(225 - (w / most) * 120);
+    ctx.fillStyle = `rgb(${g} ${g} ${g})`;
+    ctx.fillRect(2 + dx, 1 + dy, 1, 1);
+  }
+  ctx.fillStyle = "#000";
+  ctx.fillRect(2, 1, 1, 1);
+}
+
+// An 8x8 Hilbert curve, two pixels a step.
+function drawCurve(canvas) {
+  const pts = hilbert(8);
+  canvas.width = canvas.height = 17;
+  const ctx = canvas.getContext("2d");
+  ctx.fillStyle = "#fff";
+  ctx.fillRect(0, 0, 17, 17);
+  ctx.fillStyle = "#000";
+  pts.forEach(([x, y], i) => {
+    ctx.fillRect(2 * x + 1, 2 * y + 1, 1, 1);
+    const next = pts[i + 1];
+    if (next) ctx.fillRect(x + next[0] + 1, y + next[1] + 1, 1, 1);
+  });
+}
+
+// The dither's photo tag, as the cam-tag images: white letters, black outline.
+function drawDitherTag(canvas, d, scale) {
+  const cells = ditherTagCells(m, d);
+  canvas.width = cells[0].length;
+  canvas.height = cells.length;
+  canvas.style.width = `${canvas.width * scale}px`;
+  canvas.style.height = `${canvas.height * scale}px`;
+  const ctx = canvas.getContext("2d");
+  cells.forEach((row, y) =>
+    row.forEach((v, x) => {
+      if (!v) return;
+      ctx.fillStyle = v === 1 ? "#000" : "#fff";
+      ctx.fillRect(x, y, 1, 1);
+    }),
+  );
+}
+
+const lcdCells = (segs) => `<span class="ed-lcd ed-lcd-ro" title="On the display (ISO digits)">${segs.map((x, i) => segSvg(x, i)).join("")}</span>`;
+
+function renderDithers() {
+  const on = dithersOn().length;
+  $("#ed-dcount").textContent = `${on} of ${DITHERS.length}`;
+  const card = (id, cls, check, body) => `
+    <li class="ed-dither ${cls} ${state.ditherSel === id ? "sel" : ""}" data-id="${id}" tabindex="0" aria-current="${state.ditherSel === id}">
+      ${check}
+      ${body}
+    </li>`;
+  $("#ed-dlist").innerHTML =
+    state.dithers
+      .map(({ id, on }) => {
+        const d = ditherById(id);
+        return card(
+          id,
+          on ? "" : "off",
+          `<input type="checkbox" class="ed-don" ${on ? "checked" : ""} aria-label="Put ${esc(d.name)} on the camera" />`,
+          `<span class="ed-dname" title="${esc(d.name)}">${esc(d.name)}</span>
+          <span class="ed-dbody">
+            <canvas class="ed-dmap" title="${
+              d.kind === "diffuse" ? "Where a block's error goes" : d.kind === "riemersma" ? "The curve the error follows" : `The ${d.w}&times;${d.h} threshold map`
+            }"></canvas>
+            <span class="ed-dside"><canvas class="ed-dtag" role="img" aria-label="${esc(d.code)}" title="The photo tag"></canvas>${lcdCells(d.lcd)}</span>
+          </span>`,
+        );
+      })
+      .join("") +
+    // rnd only goes on or off (its checkbox, as the others'), nothing to preview
+    `<li class="ed-dither rnd ${ditherRndOn() ? "" : "off"}" data-id="rnd">
+      <input type="checkbox" class="ed-don" ${ditherRndOn() ? "checked" : ""} ${on < 2 ? "disabled" : ""} aria-label="Also a random dithering per photo" />
+      <span class="ed-dname">Random</span>
+      <span class="ed-dbody">
+        <span class="ed-dmap ed-drnd">also a random one of these per photo</span>
+        <span class="ed-dside">${lcdCells(RND_LCD)}</span>
+      </span>
+    </li>`;
+  for (const li of document.querySelectorAll("#ed-dlist li:not(.rnd)")) {
+    const d = ditherById(li.dataset.id);
+    drawDitherMap(li.querySelector(".ed-dmap"), d);
+    drawDitherTag(li.querySelector(".ed-dtag"), d, 2);
+  }
+}
+
+function selectDither(id) {
+  if (state.ditherSel === id) return;
+  state.ditherSel = id;
+  renderDithers();
+  changed({ list: false });
+}
+
+function ditherEvents(e) {
+  const li = e.target.closest("li");
+  if (!li) return;
+  const id = li.dataset.id;
+  if (e.type === "change" && e.target.matches(".ed-don")) {
+    if (id === "rnd") state.ditherRnd = e.target.checked;
+    else state.dithers.find((d) => d.id === id).on = e.target.checked;
+    renderDithers();
+    return changed({ list: false, preview: false });
+  }
+  if (e.target.closest("input") || id === "rnd") return;
+  if (e.type === "click") selectDither(id);
+  else if (e.type === "keydown" && (e.key === "Enter" || e.key === " ")) {
+    e.preventDefault();
+    selectDither(id);
+    $(`#ed-dlist li[data-id="${id}"]`).focus();
+  }
 }
 
 // ---- the slot list ----
@@ -341,7 +506,7 @@ async function renderHead() {
   const f = film(p);
   $("#ed-work-head").innerHTML = `
     ${tagCanvas("ed-tagc", p.tag, 3, false)}
-    <span><strong>Preview and edit this preset</strong> &middot; ${esc(p.name)}${p.curve ? " &middot; S-curve" : ""}${f ? ` &middot; ${esc(f.name)}` : ""}</span>`;
+    <span><strong>Preview and edit this palette</strong> &middot; ${esc(p.name)}${p.curve ? " &middot; S-curve" : ""}${f ? ` &middot; ${esc(f.name)}` : ""} &middot; ${esc(previewDither().name)}</span>`;
   const paint = await paintOf(p);
   const canvas = $("#ed-work-head .ed-tagc");
   if (canvas && current() === p) drawTag(canvas, p.tag, paint, 3, false);
@@ -352,7 +517,7 @@ function tagProblem(p) {
   const bad = [...p.tag].find((ch) => !m.font[ch]);
   if (bad) return `No "${bad}" in the camera's tag font.`;
   if (tagWidth(m, p.tag) > m.tag.cols) return "Too wide for the photo tag (its W is extra wide).";
-  if (p.on && enabled().some((q) => q !== p && q.tag === p.tag)) return "Another preset already has this tag.";
+  if (p.on && enabled().some((q) => q !== p && q.tag === p.tag)) return "Another palette already has this tag.";
   return "";
 }
 
@@ -360,7 +525,7 @@ function renderPalette() {
   const p = current();
   $("#ed-palette").innerHTML = `
     <div class="ed-row">
-      <label for="ed-from">Palette</label>
+      <label for="ed-from">Preset</label>
       <select id="ed-from">
         <option value="">Start from&hellip;</option>
         ${library.palettes.map((l, i) => `<option value="${i}">${esc(l.name)}</option>`).join("")}
@@ -625,16 +790,32 @@ async function renderPreview() {
   const paint = await paintOf(p);
   if (current() !== p) return;
   const drawable = [...p.tag].every((ch) => m.font[ch]) && tagWidth(m, p.tag) <= m.tag.cols;
-  const preset = { tag: drawable ? p.tag : "", match: p.colours, paint };
+  const preset = { tag: drawable ? p.tag : "", ditherTag: true, match: p.colours, paint };
   const lut = buildLut(preset.match, m.wy);
-  document.querySelectorAll(".ed-photo canvas").forEach((canvas, i) => {
+  document.querySelectorAll("#ed-photos .ed-photo canvas").forEach((canvas, i) => {
     const frame = frames[i];
     if (!frame) return;
     canvas.width = frame.width;
     canvas.height = frame.height;
-    canvas._out = render(m, frame, preset, lut);
+    canvas._out = render(m, frame, preset, lut, previewDither());
     if (!canvas.matches(":hover")) canvas.getContext("2d").putImageData(canvas._out, 0, 0);
   });
+  renderBig();
+}
+
+// The detail view: the large photo is the strip's selected one, as rendered.
+function renderBig() {
+  $("#ed-shots").classList.toggle("detail", state.view === "detail");
+  for (const b of document.querySelectorAll(".ed-view button")) b.setAttribute("aria-pressed", b.dataset.view === state.view);
+  const thumbs = [...document.querySelectorAll("#ed-photos .ed-photo")];
+  thumbs.forEach((f, i) => f.classList.toggle("big", state.view === "detail" && i === state.big));
+  const big = $("#ed-big canvas");
+  const src = thumbs[state.big]?.querySelector("canvas");
+  if (state.view !== "detail" || !big || !src?._out) return;
+  big.width = src._out.width;
+  big.height = src._out.height;
+  big._out = src._out;
+  if (!big.matches(":hover")) big.getContext("2d").putImageData(big._out, 0, 0);
 }
 
 function loadPhoto(i) {
@@ -650,16 +831,16 @@ function loadPhoto(i) {
 }
 
 function renderPhotos() {
-  $("#ed-photos").innerHTML = PHOTOS.map(
-    (_, i) => `
-    <figure class="ed-photo" data-i="${i}">
+  const figure = (i, cls = "") => `
+    <figure class="ed-photo ${cls}" data-i="${i}">
       <canvas width="608" height="456"></canvas>
       <figcaption>
         <label class="ed-upload">Your photo&hellip;<input type="file" accept="image/*" /></label>
         ${state.photos[i] ? `<button type="button" class="ed-reset">Reset</button>` : ""}
       </figcaption>
-    </figure>`,
-  ).join("");
+    </figure>`;
+  $("#ed-big").innerHTML = figure(state.big, "ed-large");
+  $("#ed-photos").innerHTML = PHOTOS.map((_, i) => figure(i)).join("");
 }
 
 function shrinkImage(file, max = 1200) {
@@ -694,6 +875,14 @@ async function photoEvents(e) {
   } else if (e.type === "click" && e.target.closest(".ed-reset")) {
     state.photos[i] = null;
   } else if (e.type === "click" && e.target.matches("canvas")) {
+    // in the detail view the strip picks the large photo
+    if (state.view === "detail" && !fig.matches(".ed-large")) {
+      if (state.big === i) return;
+      state.big = i;
+      renderPhotos();
+      renderPreview();
+      return save();
+    }
     return showLarge(e.target);
   } else return;
   await loadPhoto(i);
@@ -706,7 +895,8 @@ async function photoEvents(e) {
 // them; the arrow keys step through all of them.
 function showLarge(canvas) {
   if (!window.viewer) return;
-  const canvases = [...document.querySelectorAll(".ed-photo canvas")].filter((c) => c._out);
+  const canvases = [...document.querySelectorAll("#ed-photos .ed-photo canvas")].filter((c) => c._out);
+  if (canvas.closest(".ed-large")) canvas = canvases.find((c) => c.closest(".ed-photo").dataset.i === String(state.big));
   const photos = canvases.map((cv) => () => {
     const c = document.createElement("canvas");
     c.width = cv._out.width;
@@ -840,9 +1030,12 @@ function renderDownload() {
     rnd: state.rnd,
     sounds: state.sounds.on,
   });
+  if (!dithersOn().length) errors.unshift("Turn on at least one dithering.");
   const rnd = state.rnd && on.length > 1;
   $("#ed-summary").textContent =
-    `${on.length} preset${on.length === 1 ? "" : "s"} (${on.map((p) => p.tag || "?").join(", ")})` +
+    `${dithersOn().length} dithering${dithersOn().length === 1 ? "" : "s"} (${dithersOn().map((d) => d.code).join(", ")})` +
+    `${ditherRndOn() ? " + rnd" : ""} · ` +
+    `${on.length} palette${on.length === 1 ? "" : "s"} (${on.map((p) => p.tag || "?").join(", ")})` +
     `${rnd ? " + rnd" : ""} · ${state.sounds.on ? "sounds on" : "silent"}`;
   $("#ed-errors").innerHTML = errors.map((e) => `<li>${esc(e)}</li>`).join("");
   $("#ed-download").disabled = errors.length > 0;
@@ -905,7 +1098,18 @@ async function main() {
   panel.addEventListener("mousemove", (e) => e.target.closest("#ed-lcd") && hoverSeg(e));
   panel.addEventListener("mouseout", (e) => e.target.closest("#ed-lcd") && !e.relatedTarget?.closest?.("#ed-lcd") && hoverSeg({ type: "mouseleave" }));
   for (const type of ["pointerdown", "pointermove", "pointerup", "pointercancel"]) panel.addEventListener(type, pickerPointer);
-  const photos = $("#ed-photos");
+  const dlist = $("#ed-dlist");
+  dlist.addEventListener("change", ditherEvents);
+  dlist.addEventListener("click", ditherEvents);
+  dlist.addEventListener("keydown", ditherEvents);
+  $(".ed-view").addEventListener("click", (e) => {
+    const b = e.target.closest("button[data-view]");
+    if (!b || b.dataset.view === state.view) return;
+    state.view = b.dataset.view;
+    renderBig();
+    save();
+  });
+  const photos = $("#ed-shots");
   photos.addEventListener("change", photoEvents);
   photos.addEventListener("click", photoEvents);
   photos.addEventListener("drop", photoEvents);
@@ -927,8 +1131,9 @@ async function main() {
   sounds.addEventListener("click", soundEvents);
   $("#ed-download").addEventListener("click", download);
   $("#ed-reset-all").addEventListener("click", async () => {
-    if (!confirm("Start over? This forgets your presets, sounds and photos.")) return;
+    if (!confirm("Start over? This forgets your ditherings, palettes, sounds and photos.")) return;
     state = defaultState();
+    renderDithers();
     renderPhotos();
     renderSounds();
     changed({ palette: true, preview: false });
@@ -936,6 +1141,7 @@ async function main() {
     renderPreview();
   });
 
+  renderDithers();
   renderList();
   renderHead();
   renderPalette();
