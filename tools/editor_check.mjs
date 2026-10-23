@@ -27,8 +27,8 @@ function randomTag(taken) {
 function randomSize() {
   const L = m.sizeLimits;
   for (;;) {
-    const w = L.minW + 16 * int((L.maxSide - L.minW) / 16 + 1);
-    const h = L.minH + 4 * int((L.maxSide - L.minH) / 4 + 1);
+    const w = L.minW + 16 * int((L.maxW - L.minW) / 16 + 1);
+    const h = L.minH + 4 * int((L.maxH - L.minH) / 4 + 1);
     if (w * h <= L.maxPixels) return [w, h];
   }
 }

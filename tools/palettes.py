@@ -48,11 +48,13 @@ SIZES = {
 # setting's stock crop, so the camera's bracket still marks about what's in
 # the photo (rounded half up, as the editor does: W to 16, H to 4). This
 # gives back the crops above for the built-in sizes. Limits: W a multiple of
-# 16, H of 4, at least 64x48 (the tag and its margins), at most 864 a side
-# (the widest photo tried, v018) and 640x640 pixels (the most video tried:
-# the hook's time grows with the pixel count, 65% of the frame at 640x640).
+# 16, H of 4, at least 64x48 (the tag and its margins), at most 864 wide (the
+# widest photo tried, v018), 576 tall (video 640 tall alternates between two
+# crops 4 px apart, a shake: IMG_0990, IMG_0994; 576 doesn't, IMG_0996) and
+# 640x640 pixels (the hook's time grows with the pixel count; 848x480 is fine,
+# IMG_0993).
 STOCK_CROPS = {'16:9': (1920, 1080), '3:2': (1616, 1080), '4:3': (1440, 1080), '1:1': (1024, 1024)}
-SIZE_LIMITS = {'minW': 64, 'minH': 48, 'maxSide': 864, 'maxPixels': 640 * 640}
+SIZE_LIMITS = {'minW': 64, 'minH': 48, 'maxW': 864, 'maxH': 576, 'maxPixels': 640 * 640}
 
 
 def crop_for(aspect, w, h):
@@ -73,8 +75,10 @@ def size_errors(aspect, w, h):
         errors.append('a height that is a multiple of 4')
     if w < L['minW'] or h < L['minH']:
         errors.append(f"at least {L['minW']}x{L['minH']}")
-    if max(w, h) > L['maxSide']:
-        errors.append(f"at most {L['maxSide']} a side")
+    if w > L['maxW']:
+        errors.append(f"a width of at most {L['maxW']}")
+    if h > L['maxH']:
+        errors.append(f"a height of at most {L['maxH']}")
     if w * h > L['maxPixels']:
         errors.append(f"at most {L['maxPixels']:,} pixels")
     return errors

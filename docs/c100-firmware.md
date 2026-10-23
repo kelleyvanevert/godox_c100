@@ -334,10 +334,33 @@ any aspect setting: the crop is the largest at the output's shape inside the
 setting's stock crop (`crop_for`), so the camera's bracket still frames about
 what's in the photo; the built-in sizes give back the crops above. Limits
 (`SIZE_LIMITS`): W a multiple of 16, H of 4, at least 64×48 (the tag and its
-margins), at most 864 a side (the widest photo tried, `v018`) and 640×640
-pixels in all (the most video tried; the hook's time grows with the pixel
-count, 65% of the frame at 640×640). Untested: downscaling more than the
-16:9 setting's 2.7× (128×112 is 8–10×), video wider than 704.
+margins), at most 864 wide (the widest photo tried, `v018`), at most 576 tall
+(see [video 640 tall wobbles](#video-640-tall-wobbles)) and 640×640 pixels in
+all (the hook's time grows with the pixel count, 65% of the frame at 640×640).
+Untested: downscaling more than the 16:9 setting's 2.7× (128×112 is 8–10×).
+
+### Video 640 tall wobbles
+
+Video at 640×640 (IMG_0990, `v022`) shakes: consecutive frames alternate
+between two horizontal positions about 4 px apart (+2.8, −5.2, +2.0, −3.6, …
+px while the scene is still; vertical steady). Measured by averaging 8×8
+tiles (the dither's period) and registering each frame against the previous
+one. One flash with a test size per aspect setting (2026-10-23) isolated it:
+
+| clip | setting | size | pixels | back-and-forth jumps |
+|---|---|---|---|---|
+| IMG_0993 | 16:9 | 848×480 | 407k | 0% |
+| IMG_0994 | 3:2 | 640×640 (crop 1088×1080) | 410k | 96%, ~4 px |
+| IMG_0995 | 4:3 | 512×512 | 262k | 0% |
+| IMG_0996 | 1:1 | 576×576 | 332k | 0% |
+| IMG_0322 (`v012`) | 16:9 | 640×360 | 230k | 1% |
+
+Not the hook's load (848×480 has as many pixels and is steady), not the 1:1
+crop (640×640 shakes from 3:2's crop too), not width 640 (fine at 360–480
+rows for ages): the height. Somewhere between 577 and 640 rows; not narrowed
+down further, so the editor stops at 576. Possibly the 1:1 640×640 video of
+`v011`–`v019` (IMG_0303, IMG_0321) did this too; nobody looked.
+
 
 ### Strip buffer format
 

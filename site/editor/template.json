@@ -506,7 +506,8 @@
  "sizeLimits": {
   "minW": 64,
   "minH": 48,
-  "maxSide": 864,
+  "maxW": 864,
+  "maxH": 576,
   "maxPixels": 409600
  },
  "sizeTable": 766204,

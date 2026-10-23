@@ -121,7 +121,8 @@ export function sizeErrors(m, w, h) {
   if (w % 16) errors.push("a width that is a multiple of 16");
   if (h % 4) errors.push("a height that is a multiple of 4");
   if (w < L.minW || h < L.minH) errors.push(`at least ${L.minW}x${L.minH}`);
-  if (Math.max(w, h) > L.maxSide) errors.push(`at most ${L.maxSide} a side`);
+  if (w > L.maxW) errors.push(`a width of at most ${L.maxW}`);
+  if (h > L.maxH) errors.push(`a height of at most ${L.maxH}`);
   if (w * h > L.maxPixels) errors.push(`at most ${L.maxPixels.toLocaleString("en")} pixels`);
   return errors;
 }

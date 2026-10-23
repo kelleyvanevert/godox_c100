@@ -239,10 +239,10 @@ function renderOptions() {
           <button type="button" class="ed-size-reset" title="Back to ${m.sizes[aspect].join("x")}">reset</button>
         </div>
         <div class="ed-size-in">
-          <input type="number" data-i="0" value="${state.sizes[aspect][0]}" min="${L.minW}" max="${L.maxSide}" step="16"
+          <input type="number" data-i="0" value="${state.sizes[aspect][0]}" min="${L.minW}" max="${L.maxW}" step="16"
             aria-label="Width of ${aspect} photos and videos" />
           <span>x</span>
-          <input type="number" data-i="1" value="${state.sizes[aspect][1]}" min="${L.minH}" max="${L.maxSide}" step="4"
+          <input type="number" data-i="1" value="${state.sizes[aspect][1]}" min="${L.minH}" max="${L.maxH}" step="4"
             aria-label="Height of ${aspect} photos and videos" />
         </div>
         <div class="ed-size-box"><canvas class="ed-size-eg"></canvas></div>
@@ -254,7 +254,7 @@ function renderOptions() {
 }
 
 // One size's example (the first preview photo at that size, drawn to scale
-// with the others: the box's width is the largest side allowed) and its note.
+// with the others: the box's width is the widest size allowed) and its note.
 function renderSize(aspect) {
   const el = $(`.ed-size[data-aspect="${aspect}"]`);
   const [w, h] = state.sizes[aspect];
@@ -262,7 +262,7 @@ function renderSize(aspect) {
   const [ow, oh] = sizeOf(aspect);
   const canvas = el.querySelector("canvas");
   [canvas.width, canvas.height] = [ow, oh];
-  canvas.style.width = `${(100 * ow) / m.sizeLimits.maxSide}%`;
+  canvas.style.width = `${(100 * ow) / m.sizeLimits.maxW}%`;
   canvas.classList.toggle("stale", need.length > 0);
   const img = images[0];
   if (img) {
@@ -280,10 +280,10 @@ function renderSize(aspect) {
 }
 
 // The example boxes as tall as the tallest example, so there's no empty band
-// above them all; the scale stays the same (the box width is the largest side).
+// above them all; the scale stays the same (the box width is the widest size).
 function fitSizeBoxes() {
   const tallest = Math.max(...Object.keys(m.sizes).map((k) => sizeOf(k)[1]));
-  for (const box of document.querySelectorAll(".ed-size-box")) box.style.aspectRatio = `${m.sizeLimits.maxSide} / ${tallest}`;
+  for (const box of document.querySelectorAll(".ed-size-box")) box.style.aspectRatio = `${m.sizeLimits.maxW} / ${tallest}`;
 }
 
 function sizeEvents(e) {

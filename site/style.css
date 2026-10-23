@@ -1082,7 +1082,7 @@ dialog button {
   stroke-width: 2;
 }
 
-/* the examples share one scale (the box width is the largest side allowed);
+/* the examples share one scale (the box width is the widest size allowed);
    editor.js sets its aspect ratio so it's as tall as the tallest of them */
 .ed-size-box {
   box-sizing: content-box; /* the ratio is the examples', the baseline below it */
