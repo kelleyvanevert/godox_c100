@@ -1,5 +1,5 @@
 // The firmware editor: 8 preset slots (palette, S-curve, film, tag, display code), each
-// on or off, rnd and sounds; previewed on four photos, kept in localStorage,
+// on or off, rnd, tags on or off and sounds; previewed on four photos, kept in localStorage,
 // and built into a firmware in the browser (firmware.js) from the template.
 import { buildFirmware, configErrors, encodeWav, hexToYuv, sha256, slotSamples, tagCells, tagColours, tagWidth, yuvToHex, yuvToRgb } from "./firmware.js";
 import { paintColours } from "./films.js";
@@ -72,6 +72,7 @@ function defaultState() {
     slots,
     selected: slots[0].id,
     rnd: true,
+    tags: true,
     sounds: { on: false, shutter: { src: "stock" }, poweron: { src: "stock" } },
     photos: noPhotos(),
   };
@@ -88,6 +89,7 @@ function load() {
       }
       // the preview photos changed: own photos don't carry over
       if (saved.photos?.length !== PHOTOS.length) saved.photos = noPhotos();
+      saved.tags ??= true;
       return saved;
     }
   } catch {}
@@ -127,6 +129,7 @@ async function config() {
     ),
     rnd: state.rnd && on.length > 1,
     sounds: state.sounds.on,
+    tags: state.tags,
   };
 }
 
@@ -192,6 +195,10 @@ async function renderStrips() {
   }
 }
 
+function renderOptions() {
+  $("#ed-tags").checked = state.tags;
+}
+
 function renderList() {
   const on = enabled().length;
   $("#ed-count").textContent = `${on} of ${m.maxPresets}`;
@@ -200,9 +207,9 @@ function renderList() {
       (p) => `
       <li class="${p.id === state.selected ? "sel" : ""} ${p.on ? "" : "off"} ${drag?.id === p.id && drag.moved ? "lifted" : ""}"
           data-id="${p.id}" tabindex="0" aria-current="${p.id === state.selected}">
-        <input type="checkbox" class="ed-on" ${p.on ? "checked" : ""} aria-label="Put ${esc(p.tag)} on the camera" />
+        <input type="checkbox" class="ed-on" ${p.on ? "checked" : ""} aria-label="Put ${esc(state.tags ? p.tag : p.name)} on the camera" />
         <span class="ed-pick">
-          ${tagCanvas("ed-tagc", p.tag, 3, true)}
+          ${state.tags ? tagCanvas("ed-tagc", p.tag, 3, true) : ""}
           <span class="ed-name">${esc(p.name)}</span>
           <span class="ed-strip"></span>
         </span>
@@ -347,7 +354,7 @@ async function renderHead() {
   const p = current();
   const f = film(p);
   $("#ed-work-head").innerHTML = `
-    ${tagCanvas("ed-tagc", p.tag, 3, false)}
+    ${state.tags ? tagCanvas("ed-tagc", p.tag, 3, false) : ""}
     <span><strong>Preview and edit this palette</strong> &middot; ${esc(p.name)}${p.curve ? " &middot; S-curve" : ""}${f ? ` &middot; ${esc(f.name)}` : ""}</span>`;
   const paint = await paintOf(p);
   const canvas = $("#ed-work-head .ed-tagc");
@@ -355,6 +362,7 @@ async function renderHead() {
 }
 
 function tagProblem(p) {
+  if (!state.tags) return "";
   if (!p.tag) return "Give it a tag.";
   const bad = [...p.tag].find((ch) => !m.font[ch]);
   if (bad) return `No "${bad}" in the camera's tag font.`;
@@ -384,7 +392,7 @@ function renderPalette() {
         ${library.films.map((f) => `<option value="${f.id}" ${f.id === p.film ? "selected" : ""}>${esc(f.name)}</option>`).join("")}
       </select>
     </div>
-    <div class="ed-row ed-tagrow">
+    <div class="ed-row ed-tagrow" ${state.tags ? "" : "hidden"}>
       <label for="ed-tag">Tag</label>
       <input id="ed-tag" value="${esc(p.tag)}" maxlength="3" autocomplete="off" spellcheck="false" />
       ${tagCanvas("ed-tag-shown", p.tag, 5, false).replace("<canvas", '<canvas id="ed-tag-shown" title="The tag as the camera draws it"')}
@@ -393,7 +401,7 @@ function renderPalette() {
     <div class="ed-row">
       <span class="label">Display</span>
       <span class="ed-lcd" id="ed-lcd">${p.lcd.map((s, i) => segSvg(s, i)).join("")}</span>
-      <label class="ed-check"><input type="checkbox" id="ed-lcd-auto" ${p.lcdAuto ? "checked" : ""} /> follow the tag</label>
+      <label class="ed-check" ${state.tags ? "" : "hidden"}><input type="checkbox" id="ed-lcd-auto" ${p.lcdAuto ? "checked" : ""} /> follow the tag</label>
     </div>
     <div class="ed-row ed-colours-head">
       <span class="label">Colours</span>
@@ -647,7 +655,7 @@ async function renderPreview() {
   const p = current();
   const paint = await paintOf(p);
   if (current() !== p) return;
-  const drawable = [...p.tag].every((ch) => m.font[ch]) && tagWidth(m, p.tag) <= m.tag.cols;
+  const drawable = state.tags && [...p.tag].every((ch) => m.font[ch]) && tagWidth(m, p.tag) <= m.tag.cols;
   const preset = { tag: drawable ? p.tag : "", match: p.colours, paint };
   const lut = buildLut(preset.match, m.wy);
   document.querySelectorAll(".ed-photo canvas").forEach((canvas, i) => {
@@ -924,11 +932,12 @@ function renderDownload() {
     presets: on.map((p) => ({ tag: p.tag, match: p.colours, paint: p.colours, lcd: p.lcd })),
     rnd: state.rnd,
     sounds: state.sounds.on,
+    tags: state.tags,
   });
   const rnd = state.rnd && on.length > 1;
   $("#ed-summary").textContent =
-    `${on.length} palette${on.length === 1 ? "" : "s"} (${on.map((p) => p.tag || "?").join(", ")})` +
-    `${rnd ? " + rnd" : ""} · ${state.sounds.on ? "sounds on" : "silent"}`;
+    `${on.length} palette${on.length === 1 ? "" : "s"} (${on.map((p) => (state.tags ? p.tag || "?" : p.name)).join(", ")})` +
+    `${rnd ? " + rnd" : ""} · ${state.tags ? "tagged" : "no tags"} · ${state.sounds.on ? "sounds on" : "silent"}`;
   $("#ed-errors").innerHTML = errors.map((e) => `<li>${esc(e)}</li>`).join("");
   $("#ed-download").disabled = errors.length > 0;
 }
@@ -941,6 +950,7 @@ function downloadProps() {
     tags: on.map((p) => p.tag),
     films: on.map((p) => film(p)?.name ?? "none"),
     rnd: state.rnd && on.length > 1,
+    tagged: state.tags,
     sounds: state.sounds.on,
     shutter: state.sounds.on ? state.sounds.shutter.src : null,
     poweron: state.sounds.on ? state.sounds.poweron.src : null,
@@ -1000,6 +1010,11 @@ async function main() {
     changed({ preview: false });
     track("toggle_rnd", { on: state.rnd });
   });
+  $("#ed-tags").addEventListener("change", (e) => {
+    state.tags = e.target.checked;
+    track("toggle_tags", { on: state.tags });
+    changed({ palette: true });
+  });
   const panel = $("#ed-palette");
   panel.addEventListener("input", paletteInput);
   panel.addEventListener("change", paletteChange);
@@ -1033,6 +1048,7 @@ async function main() {
     track("start_over", { confirmed: sure });
     if (!sure) return;
     state = defaultState();
+    renderOptions();
     renderPhotos();
     renderSounds();
     changed({ palette: true, preview: false });
@@ -1040,6 +1056,7 @@ async function main() {
     renderPreview();
   });
 
+  renderOptions();
   renderList();
   renderHead();
   renderPalette();

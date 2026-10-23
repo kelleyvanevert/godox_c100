@@ -2,13 +2,15 @@
 // writing a config into it, byte for byte what tools/build.sh would make from
 // the same config (tools/editor_check.sh checks that). No DOM: runs in Node too.
 //
-// A config is { presets: [{ tag, match, paint, lcd }], rnd, sounds }:
+// A config is { presets: [{ tag, match, paint, lcd }], rnd, sounds, tags }:
 //   match, paint  [[Y, U, V], ...], index for index: blocks snap to a match
 //                 colour and get painted with the paint colour at its index
 //   lcd           the lit segments ("abcdefg") of each of the display's 3 cells
 //   rnd           the center button also offers a random preset per photo
 //   sounds        play the shutter and power-on sounds (the speaker is never
 //                 switched on otherwise)
+//   tags          draw the preset's tag top right on photos and videos (the
+//                 default; false leaves the tag records empty, so nothing is drawn)
 // and two WAVs (11025 Hz mono 16-bit) for the shutter and power-on sounds,
 // plus the factory's CLICK slot (sounds.click), which the template has
 // silenced and sounds on puts back.
@@ -109,11 +111,14 @@ export function configErrors(m, cfg) {
   const seen = new Set();
   for (const p of cfg.presets) {
     const name = p.tag || "(no tag)";
-    if (!p.tag) errors.push("Every palette needs a tag.");
-    else if ([...p.tag].some((ch) => !m.font[ch])) errors.push(`${name}: the tag font has no "${[...p.tag].find((ch) => !m.font[ch])}".`);
-    else if (p.tag.length > m.tag.letters || tagWidth(m, p.tag) > m.tag.cols) errors.push(`${name}: the tag is too wide.`);
-    if (seen.has(p.tag)) errors.push(`Two palettes are tagged ${name}.`);
-    seen.add(p.tag);
+    // without tags on the photos, they needn't be valid
+    if (cfg.tags !== false) {
+      if (!p.tag) errors.push("Every palette needs a tag.");
+      else if ([...p.tag].some((ch) => !m.font[ch])) errors.push(`${name}: the tag font has no "${[...p.tag].find((ch) => !m.font[ch])}".`);
+      else if (p.tag.length > m.tag.letters || tagWidth(m, p.tag) > m.tag.cols) errors.push(`${name}: the tag is too wide.`);
+      if (seen.has(p.tag)) errors.push(`Two palettes are tagged ${name}.`);
+      seen.add(p.tag);
+    }
     if (p.match.length < 1 || p.match.length > m.maxColours) errors.push(`${name}: 1 to ${m.maxColours} colours.`);
     if (p.paint.length !== p.match.length) errors.push(`${name}: paint and match colours differ in number.`);
   }
@@ -211,7 +216,7 @@ export function buildFirmware(template, m, cfg, sounds) {
   }
   cfg.presets.forEach((p, i) => {
     fw[at(pd.PMATCH) + i] = i;
-    fw.set(tagBytes(m, p.tag, p.paint), at(pd.TAGS) + i * m.tag.bytes);
+    if (cfg.tags !== false) fw.set(tagBytes(m, p.tag, p.paint), at(pd.TAGS) + i * m.tag.bytes);
   });
   o = at(pd.DISPLAY);
   const dv = new DataView(fw.buffer);

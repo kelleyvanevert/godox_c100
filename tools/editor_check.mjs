@@ -34,7 +34,7 @@ function randomConfig(i) {
     const lcd = Array.from({ length: 3 }, () => [..."abcdefg"].filter(() => rand() < 0.5).join(""));
     return { tag: randomTag(taken), match, paint, lcd };
   });
-  return { presets, rnd: rand() < 0.5, sounds: rand() < 0.5 };
+  return { presets, rnd: rand() < 0.5, sounds: rand() < 0.5, tags: rand() < 0.7 };
 }
 
 function randomWav(slot) {

@@ -438,6 +438,7 @@ dialog button {
     margin-bottom: 0;
   }
   .editor .ed-intro,
+  .editor .ed-options,
   .editor .editor-grid,
   .editor .ed-sounds,
   .editor .ed-build {
@@ -925,6 +926,24 @@ dialog button {
 .editor #ed-hex {
   width: 7em;
   text-transform: uppercase;
+}
+
+/* options above the palettes */
+
+.editor [hidden] {
+  display: none;
+}
+
+.ed-options {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 24px;
+  margin-bottom: 24px;
+}
+
+.editor .ed-options h3 {
+  margin: 0;
 }
 
 /* sounds */

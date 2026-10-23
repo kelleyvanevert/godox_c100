@@ -333,8 +333,9 @@ def lcd_nibbles(segments):
 # ---- Config: what the caves get (2026-10-18) ----
 # The presets as plain data: per preset its tag, match and paint colours
 # (Y,U,V, index for index) and the segments its code lights on the display;
-# plus whether the center button offers rnd. Built from PRESETS above, or read
-# from PRESETS_JSON (the site's editor writes the same shape). The preset data
+# plus whether the center button offers rnd, and (optional, default true)
+# whether photos and videos get the preset's tag. Built from PRESETS above, or
+# read from PRESETS_JSON (the site's editor writes the same shape). The preset data
 # has a fixed layout with room for MAX_PRESETS of NMAX colours, so the editor
 # can patch any config into one template build (tools/editor_data.py).
 MAX_PRESETS = 8
@@ -355,11 +356,13 @@ def check_config(cfg):
     pre = cfg['presets']
     assert 1 <= len(pre) <= MAX_PRESETS, f'{len(pre)} presets: 1..{MAX_PRESETS}'
     assert isinstance(cfg['rnd'], bool)
+    assert isinstance(cfg.get('tags', True), bool)
     for p in pre:
         assert 1 <= len(p['match']) <= NMAX and len(p['paint']) == len(p['match']), p['tag']
         assert all(len(c) == 3 and all(0 <= x <= 255 for x in c) for c in p['match'] + p['paint']), p['tag']
-        assert 1 <= len(p['tag']) <= TAG_LETTERS and all(ch in FONT for ch in p['tag']), p['tag']
-        assert tag_width(p['tag']) <= TAG_COLS, f'tag {p["tag"]} is too wide'
+        if cfg.get('tags', True):
+            assert 1 <= len(p['tag']) <= TAG_LETTERS and all(ch in FONT for ch in p['tag']), p['tag']
+            assert tag_width(p['tag']) <= TAG_COLS, f'tag {p["tag"]} is too wide'
         assert len(p['lcd']) == len(SS_CELLS) and all(set(s) <= set(SEGMENTS) for s in p['lcd']), p['tag']
     return cfg
 
@@ -442,9 +445,10 @@ def main():
         print(f'    .equ    TAG_BYTES, {TAG_BYTES}')
         print(f'    .macro  TAG_DATA                      @ per preset: {TAG_BYTES - 2} B of 2-bit cells'
               ' (LSB first), dark offset, light offset')
-        for p in pre:
+        tagged = pre if cfg.get('tags', True) else []      # no tags: all-zero cells draw nothing
+        for p in tagged:
             print('    .byte ' + ', '.join(map(str, tag_bytes(p['tag'], p['paint']))) + f'   @ {p["tag"]}')
-        print(f'    .space  {TAG_BYTES * (MAX_PRESETS - n)}' if n < MAX_PRESETS else '')
+        print(f'    .space  {TAG_BYTES * (MAX_PRESETS - len(tagged))}' if len(tagged) < MAX_PRESETS else '')
         print('    .endm')
         print(f'    .equ    SS_FIRST, {SS_FIRST:#x}')
         print(f'    .equ    SS_COUNT, {SS_COUNT}')
