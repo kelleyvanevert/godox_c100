@@ -104,7 +104,7 @@
           </li>
           <li>
             <img class="cam-tag" src="img/tags/6FP.png" width="39" height="21" alt="6FP" />
-            <span>A six-ink risograph palette through Fuji Provia&nbsp;100. Less realistic, more retro. I find it works better at night, inside</span>
+            <span>A six-ink risograph palette through Fuji Provia&nbsp;100. Less realistic, more retro. I find it works better at night, inside, or when photographic things without much green</span>
           </li>
           <li>
             <img class="cam-tag" src="img/tags/BW.png" width="33" height="21" alt="BW" />
@@ -128,11 +128,11 @@
           <li>
             <h3>Put the firmware to the SD</h3>
             <p class="download">
-              <a class="button" href="editor/v021_editor_template.bin" download="GP_CARDVR_UPGRADE.BIN"
+              <a class="button" href="editor/v022_editor_template.bin" download="GP_CARDVR_UPGRADE.BIN"
                   onclick="posthog.capture('download_firmware')"
                 >Download firmware</a
               >
-              <span>v021 &middot; 1.8&nbsp;MB</span>
+              <span>v022 &middot; 1.8&nbsp;MB</span>
             </p>
             <p>
               Download the firmware and put it in the root of the camera's SD card, naming it exactly: <code>GP_CARDVR_UPGRADE.BIN</code>
@@ -174,23 +174,29 @@
             and sounds. The editor only works well on a bigger screen though, so open this page on a
             desktop or laptop to try it.
           </p>
-          <p class="ed-intro">
-            Create up to <span id="ed-max">8</span> palettes, choose the sounds you want (or turn them off),
-            then download your custom firmware and flash it the same way as described above.
-          </p>
         </header>
 
         <div class="ed-options" id="ed-options">
-          <h3>Photos</h3>
-          <label class="ed-check">
-            <input type="checkbox" id="ed-tags" />
-            Show the palette's tag in the top right corner (on videos too)
-          </label>
+          <section class="ed-config" aria-labelledby="ed-config-title">
+            <h3 id="ed-config-title">Config</h3>
+            <label class="ed-check">
+              <input type="checkbox" id="ed-tags" />
+              Show the palette's tag in the top right corner of pictures and videos
+            </label>
+          </section>
+          <section class="ed-dims" aria-labelledby="ed-dims-title">
+            <h3 id="ed-dims-title">Dimensions</h3>
+            <p class="note">
+              The size of photos and videos for each of the camera's four aspect settings.
+            </p>
+            <div class="ed-sizes" id="ed-sizes"></div>
+          </section>
         </div>
 
         <div class="editor-grid">
           <aside class="ed-presets" aria-label="Palettes">
             <h3>Palettes <span class="ed-count" id="ed-count"></span></h3>
+            <p class="note">Create up to <span id="ed-max">8</span> palettes.</p>
             <ol class="ed-list" id="ed-list"></ol>
             <label class="ed-check ed-rnd">
               <input type="checkbox" id="ed-rnd" />

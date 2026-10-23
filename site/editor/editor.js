@@ -1,7 +1,7 @@
 // The firmware editor: 8 preset slots (palette, S-curve, film, tag, display code), each
-// on or off, rnd, tags on or off and sounds; previewed on four photos, kept in localStorage,
+// on or off, rnd, tags on or off, photo sizes and sounds; previewed on four photos, kept in localStorage,
 // and built into a firmware in the browser (firmware.js) from the template.
-import { buildFirmware, configErrors, encodeWav, hexToYuv, sha256, slotSamples, tagCells, tagColours, tagWidth, yuvToHex, yuvToRgb } from "./firmware.js";
+import { buildFirmware, configErrors, cropFor, encodeWav, hexToYuv, sha256, sizeErrors, slotSamples, tagCells, tagColours, tagWidth, yuvToHex, yuvToRgb } from "./firmware.js";
 import { paintColours } from "./films.js";
 import { buildLut, cameraFrame, render } from "./sim.js";
 
@@ -12,8 +12,8 @@ const PHOTOS = [
 ].map((f) => `editor/photos/${f}.jpg`);
 const noPhotos = () => PHOTOS.map(() => null);
 const DEFAULT_SLOTS = [
-  "EP6", "6FP", "BW", "endesga32 (32)",
-  "db16 + mixes (24)", "sweetie16 (16)", "riso6 + mixes (10)", "nes (32)",
+  "EP6", "6FP", "BW", "GBC (5)",
+  "db16 (16)", "sweetie16 (16)", "riso6 (6)", "nes (32)",
 ];
 const SOUND_PRESETS = { stock: "Stock", mario: "Super Mario" };
 const SOUND_LABELS = { shutter: "Shutter", poweron: "Power-on" };
@@ -44,6 +44,7 @@ let m; // template.json
 let library; // library.json: { palettes, films }
 let state;
 const frames = noPhotos(); // camera-size ImageData per photo
+const images = noPhotos(); // the loaded photos themselves
 const soundCache = {}; // "stock/shutter" -> Uint8Array
 const paints = new Map(); // film + colours -> paint colours
 
@@ -64,6 +65,8 @@ function slotFrom(item, on) {
   };
 }
 
+const defaultSizes = () => structuredClone(m.sizes);
+
 function defaultState() {
   const slots = DEFAULT_SLOTS.map((name, i) =>
     slotFrom(library.palettes.find((l) => l.name === name) ?? library.palettes[i], i < 3),
@@ -73,6 +76,7 @@ function defaultState() {
     selected: slots[0].id,
     rnd: true,
     tags: true,
+    sizes: defaultSizes(),
     sounds: { on: false, shutter: { src: "stock" }, poweron: { src: "stock" } },
     photos: noPhotos(),
   };
@@ -90,6 +94,7 @@ function load() {
       // the preview photos changed: own photos don't carry over
       if (saved.photos?.length !== PHOTOS.length) saved.photos = noPhotos();
       saved.tags ??= true;
+      if (Object.keys(saved.sizes ?? {}).join() !== Object.keys(m.sizes).join()) saved.sizes = defaultSizes();
       return saved;
     }
   } catch {}
@@ -130,6 +135,7 @@ async function config() {
     rnd: state.rnd && on.length > 1,
     sounds: state.sounds.on,
     tags: state.tags,
+    sizes: state.sizes,
   };
 }
 
@@ -195,8 +201,110 @@ async function renderStrips() {
   }
 }
 
+// ---- photo options: tags and sizes ----
+
+// An aspect setting's size if it can go on the camera, else the template's
+// (so the previews always have one).
+function sizeOf(aspect) {
+  const [w, h] = state.sizes[aspect];
+  return sizeErrors(m, w, h).length ? m.sizes[aspect] : [w, h];
+}
+const sameSize = (a, b) => a.join("x") === b.join("x");
+
+// The camera's see-through display (about 1.35:1) with the corner brackets it
+// lights for an aspect setting. Measured from Godox's product photos: the
+// brackets are always 64% of the display's height, from 19% below its top,
+// centred, and only their width follows the aspect.
+function bracketSvg(aspect) {
+  const [cw, ch] = m.stockCrops[aspect];
+  const [W, H] = [50, 37];
+  const bh = 0.64 * H;
+  const bw = (bh * cw) / ch;
+  const [x0, y0, x1, y1, l] = [(W - bw) / 2, 0.19 * H, (W + bw) / 2, 0.19 * H + bh, 3.5];
+  const d = `M${x0} ${y0 + l}V${y0}H${x0 + l}M${x1 - l} ${y0}H${x1}V${y0 + l}M${x1} ${y1 - l}V${y1}H${x1 - l}M${x0 + l} ${y1}H${x0}V${y1 - l}`;
+  return `<svg class="ed-bracket" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" aria-hidden="true">
+    <rect x="0.75" y="0.75" width="${W - 1.5}" height="${H - 1.5}" rx="5" /><path d="${d}" /></svg>`;
+}
+
 function renderOptions() {
+  const L = m.sizeLimits;
   $("#ed-tags").checked = state.tags;
+  $("#ed-sizes").innerHTML = Object.keys(m.sizes)
+    .map(
+      (aspect) => `
+      <div class="ed-size" data-aspect="${aspect}">
+        <div class="ed-size-head">
+          ${bracketSvg(aspect)}
+          <span class="label">${aspect}</span>
+          <button type="button" class="ed-size-reset" title="Back to ${m.sizes[aspect].join("x")}">reset</button>
+        </div>
+        <div class="ed-size-in">
+          <input type="number" data-i="0" value="${state.sizes[aspect][0]}" min="${L.minW}" max="${L.maxSide}" step="16"
+            aria-label="Width of ${aspect} photos and videos" />
+          <span>x</span>
+          <input type="number" data-i="1" value="${state.sizes[aspect][1]}" min="${L.minH}" max="${L.maxSide}" step="4"
+            aria-label="Height of ${aspect} photos and videos" />
+        </div>
+        <div class="ed-size-box"><canvas class="ed-size-eg"></canvas></div>
+        <span class="note ed-size-note"></span>
+      </div>`,
+    )
+    .join("");
+  for (const aspect of Object.keys(m.sizes)) renderSize(aspect);
+}
+
+// One size's example (the first preview photo at that size, drawn to scale
+// with the others: the box's width is the largest side allowed) and its note.
+function renderSize(aspect) {
+  const el = $(`.ed-size[data-aspect="${aspect}"]`);
+  const [w, h] = state.sizes[aspect];
+  const need = sizeErrors(m, w, h);
+  const [ow, oh] = sizeOf(aspect);
+  const canvas = el.querySelector("canvas");
+  [canvas.width, canvas.height] = [ow, oh];
+  canvas.style.width = `${(100 * ow) / m.sizeLimits.maxSide}%`;
+  canvas.classList.toggle("stale", need.length > 0);
+  const img = images[0];
+  if (img) {
+    const [iw, ih] = [img.naturalWidth, img.naturalHeight];
+    const [sw, sh] = iw * oh > ih * ow ? [(ih * ow) / oh, ih] : [iw, (iw * oh) / ow];
+    canvas.getContext("2d").drawImage(img, (iw - sw) / 2, (ih - sh) / 2, sw, sh, 0, 0, ow, oh);
+  }
+  const [cw, ch] = cropFor(m, aspect, ow, oh);
+  el.querySelector(".ed-size-reset").hidden = sameSize([w, h], m.sizes[aspect]);
+  el.querySelector(".ed-size-note").textContent = need.length
+    ? `Needs ${need.join(", ")}.`
+    : `${Math.round((w * h) / 1000)}k pixels · crop ${cw}x${ch}`;
+  el.classList.toggle("bad", need.length > 0);
+  fitSizeBoxes();
+}
+
+// The example boxes as tall as the tallest example, so there's no empty band
+// above them all; the scale stays the same (the box width is the largest side).
+function fitSizeBoxes() {
+  const tallest = Math.max(...Object.keys(m.sizes).map((k) => sizeOf(k)[1]));
+  for (const box of document.querySelectorAll(".ed-size-box")) box.style.aspectRatio = `${m.sizeLimits.maxSide} / ${tallest}`;
+}
+
+function sizeEvents(e) {
+  const el = e.target.closest(".ed-size");
+  if (!el) return;
+  const aspect = el.dataset.aspect;
+  const inputs = el.querySelectorAll(".ed-size-in input");
+  if (e.type === "click" && e.target.matches(".ed-size-reset")) {
+    state.sizes[aspect] = [...m.sizes[aspect]];
+    inputs.forEach((input, i) => (input.value = state.sizes[aspect][i]));
+    track("reset_size", { aspect });
+  } else if (e.target.matches(".ed-size-in input")) {
+    if (e.type === "change") {
+      const [w, h] = state.sizes[aspect];
+      return track("change_size", { aspect, size: `${w}x${h}`, ok: !sizeErrors(m, w, h).length });
+    }
+    // an empty or half-typed field reads as NaN: "needs whole numbers"
+    state.sizes[aspect][e.target.dataset.i] = e.target.value === "" ? NaN : +e.target.value;
+  } else return;
+  renderSize(aspect);
+  changed({ list: false, preview: false });
 }
 
 function renderList() {
@@ -406,8 +514,17 @@ function renderPalette() {
     <div class="ed-row ed-colours-head">
       <span class="label">Colours</span>
       <span class="ed-ncol" id="ed-ncol"></span>
+      <span class="ed-seg" role="group" aria-label="Edit the colours with">
+        <button type="button" data-mode="picker" title="Colour picker">${PICKER_ICON}</button>
+        <button type="button" data-mode="text" title="Hex codes">${TEXT_ICON}</button>
+      </span>
     </div>
     <div class="ed-swatches" id="ed-swatches"></div>
+    <div class="ed-hexlist" id="ed-hexlist-box">
+      <textarea id="ed-hexlist" rows="4" spellcheck="false" autocomplete="off"
+        aria-label="The colours as hex codes" placeholder="#5D159F #9751D6 #00560D"></textarea>
+      <span class="ed-problem" id="ed-hexlist-problem"></span>
+    </div>
     <div class="ed-colour" id="ed-colour">
       <div class="ed-colour-head">
         <span id="ed-colour-name"></span>
@@ -422,7 +539,101 @@ function renderPalette() {
     </div>`;
   renderSwatches();
   pickerFromColour();
+  renderColourMode();
   renderTagShown();
+}
+
+// ---- colours as text: hex codes separated by spaces and/or commas ----
+
+const PICKER_ICON = `<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
+  <rect x="1.5" y="1.5" width="13" height="9" fill="none" stroke="currentColor" stroke-width="1.5" />
+  <rect x="1.5" y="12.5" width="13" height="2" fill="currentColor" /><circle cx="10" cy="5" r="1.6" fill="currentColor" /></svg>`;
+const TEXT_ICON = `<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="currentColor">
+  <rect x="1" y="2.5" width="14" height="2" /><rect x="1" y="7" width="10" height="2" /><rect x="1" y="11.5" width="12" height="2" /></svg>`;
+
+const hexList = (p) => p.colours.map((c) => yuvToHex(c).toUpperCase()).join(" ");
+
+// as tall as its text, so all 32 colours show without scrolling
+function fitHexList() {
+  const ta = $("#ed-hexlist");
+  ta.style.height = "auto";
+  ta.style.height = `${ta.scrollHeight + 4}px`; // + the 2px borders
+}
+
+// The picker or the text box (the swatches show either way).
+function renderColourMode() {
+  const text = state.colourMode === "text";
+  for (const b of document.querySelectorAll(".ed-seg button")) b.setAttribute("aria-pressed", b.dataset.mode === (text ? "text" : "picker"));
+  $("#ed-colour").hidden = text;
+  $("#ed-hexlist-box").hidden = !text;
+  if (text) {
+    $("#ed-hexlist").value = hexList(current());
+    $("#ed-hexlist-problem").textContent = "";
+    fitHexList();
+  }
+}
+
+// "#5D159F 9751d6, #ABC" -> { hexes: ["#5d159f", ...] } or { problem }.
+function parseHexList(text) {
+  const words = text.split(/[\s,;]+/).filter(Boolean);
+  const bad = words.find((w) => !/^#?([0-9a-f]{3}|[0-9a-f]{6})$/i.test(w));
+  if (bad) return { problem: `"${bad}" isn't a hex colour (like #5D159F).` };
+  if (!words.length) return { problem: "At least one colour." };
+  if (words.length > m.maxColours) return { problem: `At most ${m.maxColours} colours; this is ${words.length}.` };
+  return {
+    hexes: words.map((w) => {
+      const h = w.replace("#", "").toLowerCase();
+      return "#" + (h.length === 3 ? [...h].map((ch) => ch + ch).join("") : h);
+    }),
+  };
+}
+
+// Typed colours in: ones already in the palette keep their exact value (a
+// hex goes through YUV and may come back one off), the rest are new.
+// The colour the text cursor is in (or right after, or before the next one).
+function caretColour() {
+  const ta = $("#ed-hexlist");
+  const words = ta.value.slice(0, ta.selectionStart).split(/[\s,;]+/);
+  const i = words.filter(Boolean).length - (words.at(-1) ? 1 : 0);
+  return Math.max(0, Math.min(i, current().colours.length - 1));
+}
+
+// The other way round: select colour i's hex code in the text box.
+function selectHexWord(i) {
+  const ta = $("#ed-hexlist");
+  const word = [...ta.value.matchAll(/[^\s,;]+/g)][i];
+  if (!word) return;
+  ta.focus();
+  ta.setSelectionRange(word.index, word.index + word[0].length);
+}
+
+// Moving the cursor in the text box selects its swatch (while the text is
+// valid: otherwise words and colours needn't line up).
+function selectAtCaret() {
+  const ta = $("#ed-hexlist");
+  if (document.activeElement !== ta || !parseHexList(ta.value).hexes) return;
+  const p = current();
+  const i = caretColour();
+  if (i === p.sel) return;
+  p.sel = i;
+  renderSwatches();
+  pickerFromColour();
+  save();
+}
+
+function coloursFromText(text) {
+  const p = current();
+  const { hexes, problem } = parseHexList(text);
+  $("#ed-hexlist-problem").textContent = problem ?? "";
+  if (!hexes) return;
+  const had = new Map(p.colours.map((c) => [yuvToHex(c), c]));
+  p.colours = hexes.map((h) => had.get(h) ?? hexToYuv(h));
+  p.sel = caretColour();
+  renderSwatches();
+  pickerFromColour();
+  renderTagShown();
+  renderStrips();
+  changed({ list: false });
 }
 
 function renderSwatches() {
@@ -555,6 +766,10 @@ function paletteInput(e) {
     renderTagShown();
     return changed();
   }
+  if (e.target.id === "ed-hexlist") {
+    fitHexList();
+    return coloursFromText(e.target.value);
+  }
   if (e.target.id === "ed-hex") {
     const v = e.target.value.trim().replace(/^#?/, "#");
     if (/^#[0-9a-f]{6}$/i.test(v)) {
@@ -600,6 +815,13 @@ function paletteChange(e) {
     track("pick_colour", { via: "hex", hex: yuvToHex(p.colours[p.sel]).toUpperCase() });
     pickerFromColour();
   }
+  // done typing: show the colours as stored (unless the text is wrong, to fix)
+  if (e.target.id === "ed-hexlist") {
+    const ok = !!parseHexList(e.target.value).hexes;
+    track("edit_colours_as_text", { ok, colours: p.colours.length });
+    if (ok) e.target.value = hexList(p);
+    fitHexList();
+  }
 }
 
 function paletteClick(e) {
@@ -615,12 +837,20 @@ function paletteClick(e) {
     track("edit_display", { cell: at.cell, segment: at.seg });
     return changed({ list: false, preview: false });
   }
+  const mode = e.target.closest(".ed-seg button");
+  if (mode) {
+    state.colourMode = mode.dataset.mode;
+    track("colour_mode", { mode: state.colourMode });
+    renderColourMode();
+    return save();
+  }
   const sw = e.target.closest(".sw[data-i]");
   if (sw) {
     p.sel = +sw.dataset.i;
     track("select_colour", { colour: p.sel + 1 });
     renderSwatches();
     pickerFromColour();
+    if (state.colourMode === "text") selectHexWord(p.sel);
     return save();
   }
   if (e.target.closest("#ed-dupcol") || e.target.closest("#ed-delcol")) {
@@ -672,7 +902,11 @@ function loadPhoto(i) {
   return new Promise((resolve) => {
     const img = new Image();
     img.onload = () => {
-      frames[i] = cameraFrame(m, img);
+      images[i] = img;
+      // at the template's size whatever the sizes are set to: the grid is for
+      // judging the palette, the size cards show the sizes
+      frames[i] = cameraFrame(m, m.sizes, img);
+      if (i === 0) for (const aspect of Object.keys(m.sizes)) renderSize(aspect);
       resolve();
     };
     img.onerror = () => resolve();
@@ -933,11 +1167,14 @@ function renderDownload() {
     rnd: state.rnd,
     sounds: state.sounds.on,
     tags: state.tags,
+    sizes: state.sizes,
   });
   const rnd = state.rnd && on.length > 1;
+  const sized = Object.keys(m.sizes).some((k) => !sameSize(state.sizes[k], m.sizes[k]));
   $("#ed-summary").textContent =
     `${on.length} palette${on.length === 1 ? "" : "s"} (${on.map((p) => (state.tags ? p.tag || "?" : p.name)).join(", ")})` +
-    `${rnd ? " + rnd" : ""} · ${state.tags ? "tagged" : "no tags"} · ${state.sounds.on ? "sounds on" : "silent"}`;
+    `${rnd ? " + rnd" : ""} · ${state.tags ? "tagged" : "no tags"}${sized ? " · own sizes" : ""}` +
+    ` · ${state.sounds.on ? "sounds on" : "silent"}`;
   $("#ed-errors").innerHTML = errors.map((e) => `<li>${esc(e)}</li>`).join("");
   $("#ed-download").disabled = errors.length > 0;
 }
@@ -951,6 +1188,7 @@ function downloadProps() {
     films: on.map((p) => film(p)?.name ?? "none"),
     rnd: state.rnd && on.length > 1,
     tagged: state.tags,
+    sizes: Object.values(state.sizes).map((s) => s.join("x")),
     sounds: state.sounds.on,
     shutter: state.sounds.on ? state.sounds.shutter.src : null,
     poweron: state.sounds.on ? state.sounds.poweron.src : null,
@@ -1015,8 +1253,13 @@ async function main() {
     track("toggle_tags", { on: state.tags });
     changed({ palette: true });
   });
+  const sizes = $("#ed-sizes");
+  sizes.addEventListener("input", sizeEvents);
+  sizes.addEventListener("change", sizeEvents);
+  sizes.addEventListener("click", sizeEvents);
   const panel = $("#ed-palette");
   panel.addEventListener("input", paletteInput);
+  document.addEventListener("selectionchange", selectAtCaret);
   panel.addEventListener("change", paletteChange);
   panel.addEventListener("click", paletteClick);
   panel.addEventListener("mousemove", (e) => e.target.closest("#ed-lcd") && hoverSeg(e));

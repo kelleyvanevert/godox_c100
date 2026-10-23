@@ -43,6 +43,53 @@ SIZES = {
 }
 
 
+# A config may set its own sizes (the site's editor): {aspect: [w, h]} for all
+# four. Each crop is then the largest at the output's aspect inside the aspect
+# setting's stock crop, so the camera's bracket still marks about what's in
+# the photo (rounded half up, as the editor does: W to 16, H to 4). This
+# gives back the crops above for the built-in sizes. Limits: W a multiple of
+# 16, H of 4, at least 64x48 (the tag and its margins), at most 864 a side
+# (the widest photo tried, v018) and 640x640 pixels (the most video tried:
+# the hook's time grows with the pixel count, 65% of the frame at 640x640).
+STOCK_CROPS = {'16:9': (1920, 1080), '3:2': (1616, 1080), '4:3': (1440, 1080), '1:1': (1024, 1024)}
+SIZE_LIMITS = {'minW': 64, 'minH': 48, 'maxSide': 864, 'maxPixels': 640 * 640}
+
+
+def crop_for(aspect, w, h):
+    cw, ch = STOCK_CROPS[aspect]
+    if w * ch >= h * cw:
+        return cw, (2 * cw * h + 4 * w) // (8 * w) * 4
+    return (2 * ch * w + 16 * h) // (32 * h) * 16, ch
+
+
+def size_errors(aspect, w, h):
+    L = SIZE_LIMITS
+    if not (isinstance(w, int) and isinstance(h, int)):
+        return ['whole numbers']
+    errors = []
+    if w % 16:
+        errors.append('a width that is a multiple of 16')
+    if h % 4:
+        errors.append('a height that is a multiple of 4')
+    if w < L['minW'] or h < L['minH']:
+        errors.append(f"at least {L['minW']}x{L['minH']}")
+    if max(w, h) > L['maxSide']:
+        errors.append(f"at most {L['maxSide']} a side")
+    if w * h > L['maxPixels']:
+        errors.append(f"at most {L['maxPixels']:,} pixels")
+    return errors
+
+
+def config_sizes(cfg):
+    """{aspect: (crop, output)} for a config: its own sizes, or SIZES."""
+    if 'sizes' not in cfg:
+        return SIZES
+    return {k: (crop_for(k, *cfg['sizes'][k]), tuple(cfg['sizes'][k])) for k in STOCK_CROPS}
+
+
+assert all(crop_for(k, *o) == c for k, (c, o) in SIZES.items())
+
+
 def camera_size(w, h):
     """(crop aspect, output size) of the aspect setting nearest w x h."""
     name = min(SIZES, key=lambda k: abs(SIZES[k][1][0] / SIZES[k][1][1] - w / h))
@@ -109,9 +156,10 @@ def thin(hexes, n, protect=()):
 # bytes, round-trips exactly). The rest were added 2026-10-14; the pixel-art
 # palettes use the canonical Lospec values. Tried and dropped: vibrant_summer,
 # fiesta, bold_hues, dark_sunset, vibrant_nature, seventies, pixnote24, pico8,
-# db32, earthy.
+# db32, earthy. GBC (2026-10-23): the Game Boy Color's greens, plus white.
 BASE = {
     'riso6':       ['1A1B3A', 'E0405A', 'F19041', '2AA0A0', 'F0E0BF', 'FFFFFF'],
+    'GBC':         ['071820', '336856', '89C06F', 'DFF8D0', 'FFFFFF'],
     'refreshing':  ['A7D2E5', '4992B2', '102A43', 'F1C23E', 'E8892B'],
     'mid_century': ['F87523', 'FFC31B', 'E7DCC9', '1DB7B9', '126D68',
                     '093634', '1A1B3A'],  # + dark teal, dark navy
@@ -222,7 +270,7 @@ def presets():
 # one-pixel outline (8 neighbours) in the darkest. TAG names the old palettes
 # (sort_images.py still reads them); the presets' tags are up to 3 letters,
 # right-aligned in a 3-letter field.
-TAG = {'riso6': 'R6', 'refreshing': 'RF', 'mid_century': 'MC', 'harbour': 'HB',
+TAG = {'riso6': 'R6', 'GBC': 'GBC', 'refreshing': 'RF', 'mid_century': 'MC', 'harbour': 'HB',
        'db16': 'DB', 'endesga32': 'EG', 'sweetie16': 'S6', 'nes': 'NS'}
 FONT = {  # rows top to bottom, 3 pixels each (W: 5)
     'A': ['010', '101', '111', '101', '101'],
@@ -364,6 +412,10 @@ def check_config(cfg):
             assert 1 <= len(p['tag']) <= TAG_LETTERS and all(ch in FONT for ch in p['tag']), p['tag']
             assert tag_width(p['tag']) <= TAG_COLS, f'tag {p["tag"]} is too wide'
         assert len(p['lcd']) == len(SS_CELLS) and all(set(s) <= set(SEGMENTS) for s in p['lcd']), p['tag']
+    if 'sizes' in cfg:
+        assert set(cfg['sizes']) == set(STOCK_CROPS), cfg['sizes']
+        for k, (w, h) in cfg['sizes'].items():
+            assert not size_errors(k, w, h), f'{k} {w}x{h}: needs {", ".join(size_errors(k, w, h))}'
     return cfg
 
 
@@ -431,12 +483,13 @@ def main():
             print(f'    .word   disp_{i} - base')
         print(f'    .space  {4 * (MAX_PRESETS - n)}' if n < MAX_PRESETS else '')
         print('    .endm')
-        for name, ((cw, ch), (ow, oh)) in SIZES.items():
+        sizes = config_sizes(cfg)
+        for name, ((cw, ch), (ow, oh)) in sizes.items():
             k = name.replace(':', '')
             assert ow % 16 == 0 and oh % 4 == 0 and cw % 16 == 0 and ow <= 1020
             print(f'    .equ    P{k}_W, {ow}\n    .equ    P{k}_H, {oh}\n'
                   f'    .equ    P{k}_CW, {cw}\n    .equ    P{k}_CH, {ch}      @ photo {name}: output, crop')
-        print(f'    .equ    MAX_W, {max(o[0] for _, o in SIZES.values())}           @ widest output (video hook)')
+        print(f'    .equ    MAX_W, {max(o[0] for _, o in sizes.values())}           @ widest output (video hook)')
         print(f'    .equ    TAG_ROWS, {TAG_ROWS}')
         print(f'    .equ    TAG_COLS, {TAG_COLS}')
         print(f'    .equ    TAG_SCALE, {TAG_SCALE}')

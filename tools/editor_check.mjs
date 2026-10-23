@@ -24,6 +24,15 @@ function randomTag(taken) {
   }
 }
 
+function randomSize() {
+  const L = m.sizeLimits;
+  for (;;) {
+    const w = L.minW + 16 * int((L.maxSide - L.minW) / 16 + 1);
+    const h = L.minH + 4 * int((L.maxSide - L.minH) / 4 + 1);
+    if (w * h <= L.maxPixels) return [w, h];
+  }
+}
+
 function randomConfig(i) {
   const n = i === 1 ? m.maxPresets : i === 2 ? 1 : 1 + int(m.maxPresets);
   const taken = new Set();
@@ -34,7 +43,8 @@ function randomConfig(i) {
     const lcd = Array.from({ length: 3 }, () => [..."abcdefg"].filter(() => rand() < 0.5).join(""));
     return { tag: randomTag(taken), match, paint, lcd };
   });
-  return { presets, rnd: rand() < 0.5, sounds: rand() < 0.5, tags: rand() < 0.7 };
+  const sizes = rand() < 0.6 ? Object.fromEntries(Object.keys(m.sizes).map((k) => [k, randomSize()])) : undefined;
+  return { presets, rnd: rand() < 0.5, sounds: rand() < 0.5, tags: rand() < 0.7, sizes };
 }
 
 function randomWav(slot) {
@@ -59,5 +69,5 @@ for (let i = 0; i < count; i++) {
   const fw = buildFirmware(template, m, cfg, s);
   writeFileSync(`${dir}/editor.bin`, fw);
   if (i === 0 && !fw.every((b, k) => b === template[k])) throw new Error("case 0 should equal the template");
-  console.log(`case${i}: ${cfg.presets.length} presets (${cfg.presets.map((p) => `${p.tag}:${p.match.length}`).join(" ")}), rnd ${cfg.rnd}, sounds ${cfg.sounds}`);
+  console.log(`case${i}: ${cfg.presets.length} presets (${cfg.presets.map((p) => `${p.tag}:${p.match.length}`).join(" ")}), rnd ${cfg.rnd}, sounds ${cfg.sounds}, tags ${cfg.tags ?? true}, sizes ${cfg.sizes ? Object.values(cfg.sizes).map((s) => s.join("x")).join(" ") : "default"}`);
 }

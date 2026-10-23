@@ -437,7 +437,6 @@ dialog button {
   .editor-head {
     margin-bottom: 0;
   }
-  .editor .ed-intro,
   .editor .ed-options,
   .editor .editor-grid,
   .editor .ed-sounds,
@@ -822,6 +821,56 @@ dialog button {
   color: var(--muted);
 }
 
+/* picker or hex codes: a two-button segmented control at the row's end */
+.ed-seg {
+  display: inline-flex;
+  margin-left: auto;
+  border: 2px solid var(--ink);
+}
+
+.editor .ed-seg button {
+  display: grid;
+  place-items: center;
+  padding: 3px 7px;
+  border: 0;
+}
+
+.editor .ed-seg button + button {
+  border-left: 2px solid var(--ink);
+}
+
+.editor .ed-seg button[aria-pressed="true"] {
+  background: var(--ink);
+  color: var(--paper);
+}
+
+.ed-hexlist {
+  margin-top: 10px;
+}
+
+.editor #ed-hexlist {
+  display: block;
+  width: 100%;
+  font: 14px/1.6 var(--mono);
+  color: var(--ink);
+  background: var(--paper);
+  border: 2px solid var(--ink);
+  border-radius: 0;
+  padding: 8px 10px;
+  resize: vertical;
+  text-transform: uppercase;
+}
+
+.ed-hexlist .ed-problem {
+  display: block;
+  padding-left: 0;
+  margin-top: 4px;
+}
+
+.ed-hexlist .ed-problem:empty {
+  display: none;
+}
+
 .ed-swatches {
   display: grid;
   grid-template-columns: repeat(8, 1fr);
@@ -934,16 +983,134 @@ dialog button {
   display: none;
 }
 
+/* Config on the left (over the palettes), Dimensions on the right */
 .ed-options {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px 24px;
-  margin-bottom: 24px;
+  display: grid;
+  grid-template-columns: minmax(250px, 320px) minmax(0, 1fr);
+  align-items: start;
+  margin-bottom: 36px;
 }
 
-.editor .ed-options h3 {
+.ed-config {
+  padding-right: 24px;
+}
+
+@media (max-width: 760px) {
+  .ed-options {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 24px;
+  }
+  .ed-config {
+    padding-right: 0;
+  }
+}
+
+.ed-dims {
+  container-type: inline-size;
+}
+
+.ed-dims > .note {
+  max-width: 680px;
+}
+
+/* four in a row, or two by two: never three and one */
+.ed-sizes {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+@container (max-width: 720px) {
+  .ed-sizes {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* one card per aspect setting: its inputs, example and note together */
+.ed-size {
+  border: 2px solid var(--ink);
+  padding: 10px;
+}
+
+.ed-size-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ed-size-head .label {
+  font: 15px var(--pixel);
+}
+
+.ed-size-in {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  font: 14px var(--mono);
+}
+
+.editor .ed-size-in input {
+  width: 0;
+  flex: 1;
+  font: 14px var(--mono);
+  color: var(--ink);
+  background: var(--paper);
+  border: 2px solid var(--ink);
+  padding: 4px 4px 4px 8px;
+  border-radius: 0;
+}
+
+.editor .ed-size-in input:invalid,
+.ed-size.bad .ed-size-in input {
+  outline: 2px solid var(--ink);
+  outline-offset: 1px;
+}
+
+.ed-bracket {
+  flex: none;
+  fill: none;
+  stroke: var(--ink);
+}
+
+.ed-bracket rect {
+  stroke-width: 1.5;
+  stroke: var(--muted);
+}
+
+.ed-bracket path {
+  stroke-width: 2;
+}
+
+/* the examples share one scale (the box width is the largest side allowed);
+   editor.js sets its aspect ratio so it's as tall as the tallest of them */
+.ed-size-box {
+  box-sizing: content-box; /* the ratio is the examples', the baseline below it */
+  margin: 10px 0 6px;
+  display: flex;
+  align-items: flex-end;
+  border-bottom: 2px solid var(--ink);
+}
+
+.ed-size-box canvas {
+  display: block;
+  background: #eee;
+}
+
+.ed-size-box canvas.stale {
+  opacity: 0.35;
+}
+
+.editor .ed-size .note {
+  display: block;
+  font-size: 13px;
   margin: 0;
+}
+
+.editor .ed-size-reset {
+  margin-left: auto;
+  font-size: 13px;
+  padding: 2px 8px;
 }
 
 /* sounds */

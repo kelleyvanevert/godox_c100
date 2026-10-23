@@ -1,8 +1,9 @@
 #!/bin/sh
 # Check the site's firmware editor against build.sh: for random configs (1-8
 # presets of 1-32 colours, random tags, display segments, rnd on/off, sounds
-# on/off, tags on/off, random and stock WAVs), the editor's patched template
-# must equal what build.sh assembles from the same config, byte for byte.
+# on/off, tags on/off, random photo sizes, random and stock WAVs), the
+# editor's patched template must equal what build.sh assembles from the same
+# config, byte for byte.
 #   sh tools/editor_check.sh [COUNT]
 # Run tools/editor_data.py first (the template and site/editor/template.json).
 set -e

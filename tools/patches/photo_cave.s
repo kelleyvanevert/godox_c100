@@ -402,31 +402,31 @@ VARS:
 @ r4 = size struct, r5 = APMode (0x101 video, 0x102 photo).
 photo43:                                @ 4:3
 vid43:
-    ldr     r6, =P43_W
-    ldr     r7, =P43_H
-    ldr     r0, =P43_CW
-    ldr     r1, =P43_CH
+    ldr     r6, SIZES + 32
+    ldr     r7, SIZES + 36
+    ldr     r0, SIZES + 40
+    ldr     r1, SIZES + 44
     b       size_common
 stub169:                                @ 16:9
 vid169:
-    ldr     r6, =P169_W
-    ldr     r7, =P169_H
-    ldr     r0, =P169_CW
-    ldr     r1, =P169_CH
+    ldr     r6, SIZES
+    ldr     r7, SIZES + 4
+    ldr     r0, SIZES + 8
+    ldr     r1, SIZES + 12
     b       size_common
 stub32:                                 @ 3:2
 vid32:
-    ldr     r6, =P32_W
-    ldr     r7, =P32_H
-    ldr     r0, =P32_CW
-    ldr     r1, =P32_CH
+    ldr     r6, SIZES + 16
+    ldr     r7, SIZES + 20
+    ldr     r0, SIZES + 24
+    ldr     r1, SIZES + 28
     b       size_common
 stub11:                                 @ 1:1
 vid11:
-    ldr     r6, =P11_W
-    ldr     r7, =P11_H
-    ldr     r0, =P11_CW
-    ldr     r1, =P11_CH
+    ldr     r6, SIZES + 48
+    ldr     r7, SIZES + 52
+    ldr     r0, SIZES + 56
+    ldr     r1, SIZES + 60
 size_common:
     strh    r6, [r4, #14]                 @ target
     strh    r7, [r4, #16]
@@ -442,6 +442,15 @@ size_common:
     strb    r0, [r4, #4]
     bne     PHOTO_PATH                    @ photo: rejoin at 0xf188
     b       VIDEO_PATH                    @ video: rejoin at 0xf410 (wants r6/r7)
+
+@ Per aspect (16:9, 3:2, 4:3, 1:1): output width, height, crop width, height.
+@ Words of their own, not ldr = literals (which merge equal values), so the
+@ site's editor can patch each one (editor_data.py: template.json sizeTable).
+SIZES:
+    .word   P169_W, P169_H, P169_CW, P169_CH
+    .word   P32_W, P32_H, P32_CW, P32_CH
+    .word   P43_W, P43_H, P43_CW, P43_CH
+    .word   P11_W, P11_H, P11_CW, P11_CH
 
 idx_stub:                               @ hooks FUN_000187c4 (once per photo)
     b       lut_build

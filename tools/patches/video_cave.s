@@ -59,6 +59,7 @@ vhook:
     ldr     r1, [r0, #0xdc]                @ width: one of ours (palettes.py SIZES),
     tst     r1, #15                       @  so a multiple of 16
     bne     vdone
+cmp_max_w:                                @ (the editor patches the immediate)
     cmp     r1, #MAX_W                    @  and no wider than the widest
     bhi     vdone
     cmp     r1, #0

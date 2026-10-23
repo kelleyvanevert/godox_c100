@@ -6,11 +6,11 @@
 - the template firmware: build.sh with the built-in presets, silent
   (SILENT=1), copied to site/editor/TEMPLATE. It is also the site's default
   download (what v020 does, in the editor's layout). The editor patches a
-  visitor's presets, rnd and sounds into it.
+  visitor's presets, rnd, tags, sizes and sounds into it.
 - site/editor/template.json: where to patch, read from the assembled caves
   (llvm-nm), the resource table and palettes.py, plus the template's sha256.
-- site/editor/library.json: palettes to start from (palettes.py BASE, plain
-  and topped up, and the current presets), the films (FILMS: G'MIC HaldCLUTs
+- site/editor/library.json: palettes to start from (the current presets and
+  palettes.py BASE as they are, without endesga32: EP6 is its successor), the films (FILMS: G'MIC HaldCLUTs
   from film_luts/, copied to site/editor/films/) and the S-curve (BW's tone
   curve). A preset's paint colours are its colours through the S-curve (if
   on), then through its film (if any), as film.py does it; the editor's
@@ -33,7 +33,7 @@ import palettes as P
 from gp_res import parse
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-TEMPLATE = 'v021_editor_template.bin'
+TEMPLATE = 'v022_editor_template.bin'
 SITE = os.path.join(ROOT, 'site', 'editor')
 ORIG = os.path.join(ROOT, 'c100_v1.1.6_20260929', 'GP_CARDVR_UPGRADE.BIN')
 APP = 0x10200                     # file offset of RAM address 0
@@ -47,6 +47,7 @@ FILMS = [('polaroid_690', 'Polaroid 690'), ('fuji_provia_100_generic', 'Fuji Pro
          ('kodak_ektar_100', 'Kodak Ektar 100'), ('agfa_vista_200', 'Agfa Vista 200'),
          ('fuji_superia_200', 'Fuji Superia 200'), ('polaroid_669', 'Polaroid 669'),
          ('lomography_x-pro_slide_200', 'Lomography X-Pro 200'), ('lomography_redscale_100', 'Lomography Redscale 100')]
+LIBRARY_SKIP = {'endesga32'}   # EP6 is endesga32, reworked (palettes.py PRESETS)
 PRESET_FILMS = {'EP6': 'polaroid_690', '6FP': 'fuji_provia_100_generic', 'BW': None}
 PRESET_CURVE = {'BW'}   # BW's look is the S-curve: BW_MATCH -> BW_LEVELS on luma
 # The preview photos, in grid order (3 x 3): streets, natural, close-ups
@@ -95,6 +96,7 @@ def build_template():
 
 def manifest(fw):
     photo, lcd, data = symbols('photo_cave.o'), symbols('lcd_cave.o'), symbols('preset_data.o')
+    video = symbols('video_cave.o')
     for label, key in (('MATCH_PALETTES', 'MATCH'), ('PRESET_MATCH', 'PMATCH'), ('TAGS', 'TAGS'),
                        ('DISPLAY', 'DISPLAY'), ('DISPLAY_PTRS', 'DPTRS'), ('PRESET_DATA_END', 'END')):
         assert data[label] == P.PD[key], f'{label} at {data[label]:#x}, palettes.py PD says {P.PD[key]:#x}'
@@ -104,6 +106,11 @@ def manifest(fw):
     for a in npal:                       # data-processing immediate, rotation 0: the low byte is NPAL
         assert fw[APP + a] == n and fw[APP + a + 1] & 0x0f == 0, f'{a:#x} is not an immediate {n}'
     assert fw[APP + lcd['last_center']] == n                       # NPAL - 1 + RND_MODE, rnd on
+    table = [int.from_bytes(fw[APP + photo['SIZES'] + 4 * i:APP + photo['SIZES'] + 4 * i + 4], 'little')
+             for i in range(16)]
+    assert table == [x for c, o in P.SIZES.values() for x in (*o, *c)], table   # W, H, CW, CH per aspect
+    cmp = int.from_bytes(fw[APP + video['cmp_max_w']:APP + video['cmp_max_w'] + 4], 'little')
+    assert cmp >> 20 == 0xe35, f'{cmp:#x} is not cmp rN, #imm'                    # cmp r1, #MAX_W
     for addr, _ in SPEAKER:
         assert fw[APP + addr:APP + addr + 4].hex() == NOP          # silent: speaker never on
     slots = {f'{name}.{ext}'.upper(): (s, e) for name, ext, s, e in parse(fw)}
@@ -131,6 +138,10 @@ def manifest(fw):
         'wav': {'rate': 11025, 'channels': 1, 'bits': 16},
         'sizes': {k: v[1] for k, v in P.SIZES.items()},
         'crops': {k: v[0] for k, v in P.SIZES.items()},
+        'stockCrops': P.STOCK_CROPS,
+        'sizeLimits': P.SIZE_LIMITS,
+        'sizeTable': photo['SIZES'],      # per aspect, in 'sizes' order: W, H, CW, CH words
+        'maxWCmp': video['cmp_max_w'],    # cmp r1, #MAX_W (widest output)
         'wy': P.WY,
         'defaults': P.builtin_config(),
     }
@@ -141,14 +152,11 @@ def library():
     palettes = [{'name': f'{p["tag"]}', 'tag': p['tag'], 'colours': p['match'],
                  'film': PRESET_FILMS[p['tag']], 'curve': p['tag'] in PRESET_CURVE, 'lcd': p['lcd']}
                 for p in P.builtin_config()['presets']]
-    expanded = P.expanded()
     for name, hexes in P.BASE.items():
+        if name in LIBRARY_SKIP:
+            continue
         base = [list(P.hex_to_yuv(h)) for h in dict.fromkeys(hexes)]
         palettes.append({'name': f'{name} ({len(base)})', 'tag': P.TAG[name], 'colours': base, 'film': None, 'curve': False})
-        ex = [list(c) for c, _ in expanded[name]]
-        if len(ex) > len(base):
-            palettes.append({'name': f'{name} + mixes ({len(ex)})', 'tag': P.TAG[name], 'colours': ex, 'film': None,
-                             'curve': False})
     films = [{'id': f, 'name': name, 'file': f'films/{f}.png'} for f, name in FILMS]
     curve = [[0, 0]] + [list(p) for p in zip(P.BW_MATCH, P.BW_LEVELS)][1:-1] + [[255, 255]]
     return {'palettes': palettes, 'films': films, 'curve': curve}
@@ -162,7 +170,9 @@ def main():
     for f, _ in FILMS:
         shutil.copy(luts[f], os.path.join(SITE, 'films', f'{f}.png'))
     json.dump(manifest(fw), open(os.path.join(SITE, 'template.json'), 'w'), indent=1)
-    json.dump(library(), open(os.path.join(SITE, 'library.json'), 'w'), separators=(',', ':'))
+    with open(os.path.join(SITE, 'library.json'), 'w') as f:
+        json.dump(library(), f, separators=(',', ':'))
+        f.write('\n')
 
     orig = open(ORIG, 'rb').read()
     slots = {f'{name}.{ext}'.upper(): (s, e) for name, ext, s, e in parse(orig)}

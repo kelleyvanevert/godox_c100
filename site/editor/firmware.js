@@ -2,7 +2,7 @@
 // writing a config into it, byte for byte what tools/build.sh would make from
 // the same config (tools/editor_check.sh checks that). No DOM: runs in Node too.
 //
-// A config is { presets: [{ tag, match, paint, lcd }], rnd, sounds, tags }:
+// A config is { presets: [{ tag, match, paint, lcd }], rnd, sounds, tags, sizes }:
 //   match, paint  [[Y, U, V], ...], index for index: blocks snap to a match
 //                 colour and get painted with the paint colour at its index
 //   lcd           the lit segments ("abcdefg") of each of the display's 3 cells
@@ -11,6 +11,8 @@
 //                 switched on otherwise)
 //   tags          draw the preset's tag top right on photos and videos (the
 //                 default; false leaves the tag records empty, so nothing is drawn)
+//   sizes         { "16:9": [w, h], ... } for each aspect setting, photo and video
+//                 (optional; the template's otherwise). The crop follows (cropFor).
 // and two WAVs (11025 Hz mono 16-bit) for the shutter and power-on sounds,
 // plus the factory's CLICK slot (sounds.click), which the template has
 // silenced and sounds on puts back.
@@ -101,6 +103,42 @@ export function lcdNibbles(m, segments) {
   return nib;
 }
 
+// ---- sizes (palettes.py crop_for, size_errors) ----
+
+// The largest crop at the output's aspect inside the aspect setting's stock
+// crop, rounded half up: the width to 16, the height to 4.
+export function cropFor(m, aspect, w, h) {
+  const [cw, ch] = m.stockCrops[aspect];
+  if (w * ch >= h * cw) return [cw, Math.floor((2 * cw * h + 4 * w) / (8 * w)) * 4];
+  return [Math.floor((2 * ch * w + 16 * h) / (32 * h)) * 16, ch];
+}
+
+// What a size still needs, as phrases ("a width that is a multiple of 16").
+export function sizeErrors(m, w, h) {
+  const L = m.sizeLimits;
+  if (!Number.isInteger(w) || !Number.isInteger(h)) return ["whole numbers"];
+  const errors = [];
+  if (w % 16) errors.push("a width that is a multiple of 16");
+  if (h % 4) errors.push("a height that is a multiple of 4");
+  if (w < L.minW || h < L.minH) errors.push(`at least ${L.minW}x${L.minH}`);
+  if (Math.max(w, h) > L.maxSide) errors.push(`at most ${L.maxSide} a side`);
+  if (w * h > L.maxPixels) errors.push(`at most ${L.maxPixels.toLocaleString("en")} pixels`);
+  return errors;
+}
+
+// cmp r1, #imm as llvm-mc encodes it: an 8-bit value rotated right by an even
+// amount, the smallest such value.
+function cmpImmediate(insn, v) {
+  let rot = 0;
+  if (v > 0xff) {
+    const tz = 31 - Math.clz32(v & -v);
+    rot = (32 - (tz & ~1)) & 31;
+    v >>>= tz & ~1;
+  }
+  if (v > 0xff) throw new Error(`${v} isn't an ARM immediate`);
+  return ((insn & ~0xfff) | ((rot >> 1) << 8) | v) >>> 0;
+}
+
 // ---- checks ----
 
 export function configErrors(m, cfg) {
@@ -121,6 +159,10 @@ export function configErrors(m, cfg) {
     }
     if (p.match.length < 1 || p.match.length > m.maxColours) errors.push(`${name}: 1 to ${m.maxColours} colours.`);
     if (p.paint.length !== p.match.length) errors.push(`${name}: paint and match colours differ in number.`);
+  }
+  for (const [aspect, [w, h]] of Object.entries(cfg.sizes ?? {})) {
+    const need = sizeErrors(m, w, h);
+    if (need.length) errors.push(`${aspect} photos need ${need.join(", ")}.`);
   }
   return errors;
 }
@@ -229,6 +271,14 @@ export function buildFirmware(template, m, cfg, sounds) {
   [...cfg.presets.map((p) => p.lcd), m.rndLcd].forEach((segs, i) =>
     fw.set(lcdNibbles(m, segs), at(m.lcdTags) + i * m.ssCount),
   );
+  const sizes = { ...m.sizes, ...cfg.sizes };
+  Object.keys(m.sizes).forEach((aspect, i) => {
+    const [w, h] = sizes[aspect];
+    [w, h, ...cropFor(m, aspect, w, h)].forEach((x, j) => dv.setUint32(at(m.sizeTable) + 16 * i + 4 * j, x, true));
+  });
+  const maxW = Math.max(...Object.values(sizes).map(([w]) => w));
+  dv.setUint32(at(m.maxWCmp), cmpImmediate(dv.getUint32(at(m.maxWCmp), true), maxW), true);
+
   for (const a of m.npal) fw[at(a)] = n;
   fw[at(m.lastCenter)] = n - 1 + (cfg.rnd ? 1 : 0);
 

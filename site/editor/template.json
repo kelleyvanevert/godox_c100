@@ -1,7 +1,7 @@
 {
- "file": "v021_editor_template.bin",
+ "file": "v022_editor_template.bin",
  "size": 1841152,
- "sha256": "4993acfbdd930cdceff125a15194739c8b9d0a3f83de1e14031b7629d79a1064",
+ "sha256": "06cf9c59368af785a19f3185248fb7c01979bb62c4c4b8ac1d0c6bcdecdf6761",
  "appOffset": 66048,
  "maxPresets": 8,
  "maxColours": 32,
@@ -485,6 +485,32 @@
    1024
   ]
  },
+ "stockCrops": {
+  "16:9": [
+   1920,
+   1080
+  ],
+  "3:2": [
+   1616,
+   1080
+  ],
+  "4:3": [
+   1440,
+   1080
+  ],
+  "1:1": [
+   1024,
+   1024
+  ]
+ },
+ "sizeLimits": {
+  "minW": 64,
+  "minH": 48,
+  "maxSide": 864,
+  "maxPixels": 409600
+ },
+ "sizeTable": 766204,
+ "maxWCmp": 767900,
  "wy": 2,
  "defaults": {
   "presets": [

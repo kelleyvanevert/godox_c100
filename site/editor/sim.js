@@ -2,7 +2,7 @@
 // lookup table): per 2x2 block the average luma plus a 4x4 Bayer offset, the
 // block's Y, U, V looked up in a 33x33x33 table of nearest match colours,
 // painted with the paint colour at that index; then the tag, top right.
-import { tagCells, tagColours, yuvToRgb } from "./firmware.js";
+import { cropFor, tagCells, tagColours, yuvToRgb } from "./firmware.js";
 
 const BAYER = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5];
 const N = 33;
@@ -26,18 +26,19 @@ export function buildLut(match, wy) {
   return lut;
 }
 
-// The photo cropped and scaled to the size the camera uses for its aspect.
-export function cameraSize(m, w, h) {
-  const name = Object.keys(m.sizes).reduce((a, b) =>
-    Math.abs(m.sizes[a][0] / m.sizes[a][1] - w / h) <= Math.abs(m.sizes[b][0] / m.sizes[b][1] - w / h) ? a : b,
-  );
-  return { crop: m.crops[name], size: m.sizes[name] };
+// The aspect setting nearest a photo's shape (by the settings' stock crops),
+// with its crop and output size; sizes = { "16:9": [w, h], ... }.
+export function cameraSize(m, sizes, w, h) {
+  const off = (k) => Math.abs(m.stockCrops[k][0] / m.stockCrops[k][1] - w / h);
+  const name = Object.keys(m.stockCrops).reduce((a, b) => (off(a) <= off(b) ? a : b));
+  return { crop: cropFor(m, name, ...sizes[name]), size: sizes[name] };
 }
 
-export function cameraFrame(m, img) {
+// The photo cropped (centred, to the crop's aspect) and scaled to the output.
+export function cameraFrame(m, sizes, img) {
   const w = img.naturalWidth || img.width;
   const h = img.naturalHeight || img.height;
-  const { crop, size } = cameraSize(m, w, h);
+  const { crop, size } = cameraSize(m, sizes, w, h);
   let sx = 0, sy = 0, sw = w, sh = h;
   if (w * crop[1] > h * crop[0]) (sw = Math.round((h * crop[0]) / crop[1])), (sx = (w - sw) / 2);
   else (sh = Math.round((w * crop[1]) / crop[0])), (sy = (h - sh) / 2);

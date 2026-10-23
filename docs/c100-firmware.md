@@ -1,6 +1,6 @@
 # Godox C100 firmware hacking
 
-_Last updated 2026-10-18_
+_Last updated 2026-10-23_
 
 **Working on the camera (`v021`):** pixel-art photos and videos at ~274k
 pixels for every aspect ratio, three presets (EP6, 6FP, BW) plus rnd chosen
@@ -37,6 +37,8 @@ small resolution, a limited colour palette, and dithering.
 | Video at the photo sizes (hook takes any width up to `MAX_W`) | on the camera, working (`v020`) |
 | Preset data in fixed slots (8 presets × 32 colours), preset count and rnd patchable | on the camera, working (`v021`) |
 | [Site editor](#the-sites-firmware-editor) builds: own presets, S-curve, films, tags, display codes, rnd, sounds | on the camera, working (2026-10-18: photos, video, sounds, palettes) |
+| Editor: no tag on photos and video (empty tag records) | built, `editor_check.sh` (2026-10-23) |
+| Editor: own photo/video size per aspect setting (`v022` template: a size table) | built, `editor_check.sh`; not yet on the camera |
 | Table kept when the preset doesn't change (no ~60 ms fill before the capture) | built (`v015`), emulator |
 
 Open: [repeated frames](#timing-and-headroom) in some dithered videos.
@@ -186,10 +188,15 @@ which shifts every address after them).
 - `v021_editor_template.bin` — v020's code with the preset data in fixed
   slots (room for 8 presets of 32 colours), silent (`SILENT=1`), the same
   three presets and rnd. Behaves as v020 does; differs from it only in the
-  photo cave's literals, the preset data and the display table. The current
-  build, the site's default download (a copy in `site/editor/`) and the
-  template the [site's editor](#the-sites-firmware-editor) patches. Works on
-  the camera, and so do editor builds from it (2026-10-18).
+  photo cave's literals, the preset data and the display table. The site's
+  download and editor template until v022. Works on the camera, and so do
+  editor builds from it (2026-10-18).
+- `v022_editor_template.bin` — v021 with the size stubs reading a table of
+  their own (16 words: W, H, crop W, crop H per aspect) instead of merged
+  `ldr =` literals, so the editor can set each size; same sizes, so it should
+  behave as v021 does. The current build, the site's default download and the
+  editor's template (`site/editor/`; v021 is now only in `build_backups/`).
+  Not yet on the camera.
 
 ## Code caves and hooks
 
@@ -318,6 +325,19 @@ then rejoin the photo path at `0xf188`. (The first attempt set only T, which
 makes the firmware crop instead of scale; the crop and first scaler must be
 set too.) The effect reads the width from the strip size, so it works at any
 of these widths; the tag is placed from the right edge.
+
+**Own sizes (editor, `v022`).** The stubs read their sizes from `SIZES` in
+the photo cave, one word each, and the editor patches it and the video hook's
+`cmp r1, #MAX_W` (`palettes.py` takes the same `sizes` in `PRESETS_JSON`, and
+`editor_check.sh` checks random sizes against `build.sh`). Any shape goes in
+any aspect setting: the crop is the largest at the output's shape inside the
+setting's stock crop (`crop_for`), so the camera's bracket still frames about
+what's in the photo; the built-in sizes give back the crops above. Limits
+(`SIZE_LIMITS`): W a multiple of 16, H of 4, at least 64×48 (the tag and its
+margins), at most 864 a side (the widest photo tried, `v018`) and 640×640
+pixels in all (the most video tried; the hook's time grows with the pixel
+count, 65% of the frame at 640×640). Untested: downscaling more than the
+16:9 setting's 2.7× (128×112 is 8–10×), video wider than 704.
 
 ### Strip buffer format
 
@@ -716,7 +736,8 @@ mode): two recordings, a new preset for the second, 0.00% differing.
 ## The site's firmware editor
 
 `site/editor/` (on godox.klve.nl) lets anyone fill 8 preset slots (palette,
-S-curve, film, tag, display code) and tick 1–8 of them, turn rnd on or off, and sounds
+S-curve, film, tag, display code) and tick 1–8 of them, turn rnd on or off,
+leave the tags off, set the photo/video size of each aspect setting, and turn sounds
 on or off (stock, Mario or their own), previews them on photos, and builds
 the firmware in the browser.
 
@@ -736,7 +757,7 @@ round half to even), and gives exactly `film_colours.py` for EP6 and 6FP.
 `film_luts/` to `site/editor/films/`, ~200 KB each, loaded when chosen).
 
 **Template, not assembler.** Everything the editor changes is data or an
-immediate, so it patches one template build (`site/editor/v021_editor_template.bin`,
+immediate, so it patches one template build (`site/editor/v022_editor_template.bin`,
 checked against its sha256) instead of assembling:
 
 - The preset data cave has a fixed layout (`palettes.py PD`): each table is
@@ -756,6 +777,12 @@ checked against its sha256) instead of assembling:
   `patch_res.py` does (0xFF padding; silent = the WAV with its data zeroed).
   The template is silent, so with sounds on the editor also puts the
   factory's CLICK slot back, byte for byte (`sounds/stock_click.wav`).
+- Tags off: the tag records stay zero (cell 0 = the photo shows through), so
+  `draw_tag` draws nothing; no code changes.
+- Sizes: the 16 words of `SIZES` (output and crop per aspect, the crop from
+  `cropFor`) and the immediate of `cmp_max_w` (the widest output), encoded as
+  llvm-mc does: the smallest 8-bit value with an even rotation (704 = 11 ror
+  26).
 
 `site/editor/template.json` lists every offset, read from the assembled caves
 by `editor_data.py`. `firmware.js` is the patcher (no DOM, runs in Node),
@@ -764,7 +791,8 @@ by `editor_data.py`. `firmware.js` is the patcher (no DOM, runs in Node),
 
 **Verified (2026-10-18):** `editor_check.sh` (16 random configs: 1–8 presets
 of 1–32 colours, random tags and segments, rnd and sounds on/off, random and
-stock WAVs) gives byte-identical files from the editor and `build.sh`; so did
+stock WAVs; since 2026-10-23 also tags on/off and random sizes) gives
+byte-identical files from the editor and `build.sh`; so did
 two downloads from the page itself (7 presets and an uploaded sound; 5
 presets, one with an edited palette through Kodachrome 64). The emulator
 tests pass on the default template, on 8 presets of up to 32 colours and on
