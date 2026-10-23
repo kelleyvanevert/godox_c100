@@ -945,6 +945,36 @@ more to move. Not proven: stock 1080p writes ~9 Mbit/s without trouble.
 - `SILENT=1` NOPs the three amp-on calls (0x22b38, 0x350f0, 0x2ed50), so the
   amp is never powered: no sounds and no hiss.
 
+### What the speaker does to a sound
+
+From a phone recording of an uploaded "fahhh" voice clip (2026-10-23) next to
+the 11025 Hz file the editor made of it:
+
+- No bass: below ~1 kHz is 10–35 dB down; the voice's fundamental (240 Hz)
+  and lower formants are gone.
+- No smoothing filter after the DAC: each sample is held, so the sound comes
+  back mirrored around 11025 Hz (a 1350 Hz partial also plays at 9675 and
+  12375 Hz). Those mirrored copies are off the voice's harmonic series, which
+  sounds metallic and buzzy.
+- Overdrive: the recording has 10–16 dB more at 5–8 kHz than a clean
+  sample-and-hold would give, i.e. distortion. The editor had peak-normalised
+  the clip (loudest 50 ms at −9.4 dB RMS); every clip that plays cleanly (stock
+  and Mario) peaks at −8…−12 dB and sits at ≈ −17 dB RMS.
+
+So the editor now shapes uploads for the speaker (high-pass 800 Hz, low-pass
+4.5 kHz, loudest 50 ms at −16 dB RMS, peaks ≤ −3 dB), and its Play button
+simulates the camera (4× sample-and-hold to 44.1 kHz, tanh soft clip,
+high-pass 1.2 kHz, +11 dB at 2 kHz, +14 dB at 7.5 kHz), fitted to that
+recording to within ±3 dB per third-octave band from 500 Hz to 12.5 kHz.
+
+A higher sample rate would move the mirrored copies out of hearing range.
+The audio clock setter `FUN_000438b4` takes 8000–48000 Hz, and the decode
+task `FUN_000052c4` accepts WAV formats 1, 2, 6, 7 and 17 (PCM, MS ADPCM,
+A-law, µ-law, IMA ADPCM; mask at 0x5acc). Neither is confirmed on the
+UI-sound path. The only call to `FUN_000438b4` found so far is from the AVI
+recorder, with the rate from the WAV header. Untested. At 22050 Hz 16-bit
+the 16 KB power-on slot holds only 0.37 s.
+
 ## Look knobs (contrast / brightness)
 
 `build.sh` applies an optional per-block brightness pre-map before palette

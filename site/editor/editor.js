@@ -769,8 +769,31 @@ async function stockClick() {
   return soundCache.click;
 }
 
-// Any audio file -> 11025 Hz mono 16-bit, leading silence trimmed, cut to the
-// slot with a short fade, peak-normalised.
+// Biquads in a chain, from [type, Hz, Q, dB]; lowpass/highpass Q is in dB in Web
+// Audio, so -3.01 is Butterworth.
+function filters(ctx, specs) {
+  return specs.map(([type, frequency, Q, gain = 0]) => new BiquadFilterNode(ctx, { type, frequency, Q, gain }));
+}
+const chain = (from, nodes, to) => [...nodes, to].reduce((a, b) => (a.connect(b), b), from);
+
+// Highest 50 ms RMS (half-overlapping windows): how loud a clip sounds at its loudest.
+function rmsPeak(data, rate) {
+  const win = Math.round(rate * 0.05);
+  let best = 0;
+  for (let i = 0; i + win <= data.length; i += win >> 1) {
+    let s = 0;
+    for (let j = i; j < i + win; j++) s += data[j] * data[j];
+    best = Math.max(best, s / win);
+  }
+  return Math.sqrt(best);
+}
+
+// Any audio file -> 11025 Hz mono 16-bit, voiced for the camera's speaker,
+// leading silence trimmed, cut to the slot with a short fade. The speaker plays
+// nothing below ~1 kHz, and the DAC mirrors whatever is near 5.5 kHz back down,
+// so both are filtered out. The level is that of the stock and Mario clips
+// (loudest 50 ms at -16 dB RMS, peaks at most -3 dB): a peak-normalised voice
+// is 6-8 dB hotter and the amp distorts it.
 async function convertSound(file, slot) {
   const ctx = new AudioContext();
   const decoded = await ctx.decodeAudioData(await file.arrayBuffer());
@@ -780,7 +803,7 @@ async function convertSound(file, slot) {
   const off = new OfflineAudioContext(1, len, rate);
   const src = off.createBufferSource();
   src.buffer = decoded;
-  src.connect(off.destination);
+  chain(src, filters(off, [["highpass", 800, -3.01], ["highpass", 800, -3.01], ["lowpass", 4500, -3.01]]), off.destination);
   src.start();
   const data = (await off.startRendering()).getChannelData(0);
   const peak = data.reduce((a, x) => Math.max(a, Math.abs(x)), 0) || 1;
@@ -788,12 +811,42 @@ async function convertSound(file, slot) {
   start = Math.max(0, start - Math.round(rate * 0.005));
   const n = Math.min(slotSamples(m, slot), data.length - start);
   const fade = Math.min(n, Math.round(rate * 0.02));
-  const gain = 0.9 / peak;
+  const gain = Math.min(10 ** (-16 / 20) / (rmsPeak(data.subarray(start, start + n), rate) || 1), 10 ** (-3 / 20) / peak);
   const samples = Int16Array.from({ length: n }, (_, i) => {
     const f = i >= n - fade && n < data.length - start ? (n - i) / fade : 1;
     return Math.max(-32768, Math.min(32767, Math.round(data[start + i] * gain * f * 32767)));
   });
   return { wav: encodeWav(m, samples), cut: data.length - start > n };
+}
+
+// A WAV's 16-bit samples as -1..1 (the stock ones have a LIST chunk before the data).
+function wavSamples(bytes) {
+  const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  let o = 12;
+  while (o + 8 <= bytes.length && String.fromCharCode(...bytes.subarray(o, o + 4)) !== "data") o += 8 + dv.getUint32(o + 4, true);
+  const n = Math.min(dv.getUint32(o + 4, true), bytes.length - o - 8) >> 1;
+  return Float32Array.from({ length: n }, (_, i) => dv.getInt16(o + 8 + i * 2, true) / 32768);
+}
+
+// Play a clip roughly as the camera does, fitted to a phone recording of it: the
+// DAC holds each sample for 4 output samples (no smoothing filter, so the sound
+// is mirrored around 11 kHz), the amp soft-clips, and the tiny speaker has no
+// bass and peaks around 2 and 7.5 kHz.
+async function playOnCamera(bytes) {
+  const x = wavSamples(bytes);
+  const rate = m.wav.rate * 4;
+  const ctx = new AudioContext({ sampleRate: rate });
+  const buf = ctx.createBuffer(1, x.length * 4, rate);
+  const held = buf.getChannelData(0);
+  held.forEach((_, i) => (held[i] = Math.tanh(3 * x[i >> 2]) / 3));
+  const src = new AudioBufferSourceNode(ctx, { buffer: buf });
+  const speaker = filters(ctx, [
+    ["highpass", 1200, -3.01], ["highpass", 1200, -3.01], ["highpass", 1200, -3.01],
+    ["peaking", 2000, 1.2, 11], ["peaking", 7500, 0.9, 14], ["lowpass", 11000, -3.01],
+  ]);
+  chain(src, speaker, new GainNode(ctx, { gain: 0.4 })).connect(ctx.destination);
+  src.onended = () => ctx.close();
+  src.start();
 }
 
 function renderSounds() {
@@ -855,8 +908,7 @@ async function soundEvents(e) {
       alert(`Couldn't read ${file.name} as audio.`);
     }
   } else if (e.type === "click" && e.target.closest(".ed-play")) {
-    const audio = new Audio(URL.createObjectURL(new Blob([await soundBytes(slot)], { type: "audio/wav" })));
-    audio.play();
+    await playOnCamera(await soundBytes(slot));
     track("play_sound", { slot, src: s.src });
     return;
   } else return;
