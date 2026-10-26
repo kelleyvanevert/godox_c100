@@ -2,9 +2,9 @@
 // display code), each on or off, rnd and the normal mode, tags on or off, photo sizes
 // and sounds; previewed on nine photos, kept in localStorage,
 // and built into a firmware in the browser (firmware.js) from the template.
-import { buildFirmware, configErrors, cropFor, encodeWav, hexToYuv, sha256, sortedRamp, sizeErrors, slotSamples, tagCells, tagColours, tagWidth, yuvToHex, yuvToRgb } from "./firmware.js?v=202610262303";
-import { paintColours } from "./films.js?v=202610262303";
-import { buildLut, cameraFrame, render } from "./sim.js?v=202610262303";
+import { buildFirmware, configErrors, cropFor, encodeWav, hexToYuv, sha256, sortedRamp, sizeErrors, slotSamples, tagCells, tagColours, tagWidth, yuvToHex, yuvToRgb } from "./firmware.js?v=202610262311";
+import { paintColours } from "./films.js?v=202610262311";
+import { buildLut, cameraFrame, render } from "./sim.js?v=202610262311";
 
 // this module's ?v= (tools/bump_site_version.sh), for the JSON it fetches
 const STAMP = new URL(import.meta.url).search;
@@ -572,7 +572,7 @@ function renderPalette() {
     ${fxRow(p, "contrast")}
     ${fxRow(p, "brightness")}
     <div class="ed-gb" role="group" aria-labelledby="ed-gb-label">
-      <p class="ed-gb-label" id="ed-gb-label">Game Boy Camera related</p>
+      <p class="ed-gb-label" id="ed-gb-label">Game Boy Camera related (thanks to <a href="https://github.com/DonaldLSayers/godox_c100">Donald Sayers</a>)</p>
       <div class="ed-row">
         <span class="label">Ramp</span>
         <label class="ed-check"><input type="checkbox" id="ed-shades" ${p.shades ? "checked" : ""} />

@@ -4,7 +4,7 @@
 // tone), sharpened, plus its dither offset; the block's Y, U, V looked up in
 // a 33x33x33 table of nearest match colours (or for a ramp, the even shade
 // of its luma), painted with the paint colour at that index; then the tag.
-import { cropFor, ditherTable, lumaMap, sharpenWeight, tagCells, tagColours, yuvToRgb } from "./firmware.js?v=202610262303";
+import { cropFor, ditherTable, lumaMap, sharpenWeight, tagCells, tagColours, yuvToRgb } from "./firmware.js?v=202610262311";
 
 const N = 33;
 
