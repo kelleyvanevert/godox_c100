@@ -6,7 +6,7 @@ import { buildFirmware, configErrors, cropFor, encodeWav, hexToYuv, lumaMap, sha
 import { paintColours } from "./films.js";
 import { buildLut, cameraFrame, render } from "./sim.js";
 
-const STORE = "c100-editor-v2";
+const STORE = "c100-editor-v3";
 // a 3 x 3 grid: streets, natural, close-ups
 const PHOTOS = [
   "street_sign", "street_duck", "snail", "hydrangeas", "mimosa", "turtle", "cup", "IMG_0577", "dessert",
