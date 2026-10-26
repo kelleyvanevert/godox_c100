@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Off-camera replica of the photo_cave.s pixel hook, for trying palette ideas.
 
-Mirrors the firmware: 4:2:0 2x2 blocks, block luma average, CONTRAST/BRIGHT
-pre-map, 4x4 Bayer (+-32) on luma, Manhattan nearest colour in JFIF Y,U,V.
+Mirrors the firmware: 4:2:0 2x2 blocks, block luma average, the preset's
+luma map (contrast/brightness, clamped), 4x4 Bayer (+-32) on luma, Manhattan nearest colour in JFIF Y,U,V.
 Extra knobs (not on the camera yet) are off by default, so the defaults
 reproduce what the camera does today.
 
@@ -75,7 +75,7 @@ def match(img, pal, wy=1, cdither=0, contrast=100, bright=0, sat=100, lut=None):
     h, w = ycc.shape[0] // 2 * 2, ycc.shape[1] // 2 * 2
     blk = ycc[:h, :w].reshape(h // 2, 2, w // 2, 2, 3).sum(axis=(1, 3)) // 4
     Y, U, V = blk[..., 0], blk[..., 1], blk[..., 2]
-    Y = (Y - 128) * (contrast * 128 // 100) // 128 + 128 + bright
+    Y = np.clip((Y - 128) * (contrast * 128 // 100) // 128 + 128 + bright, 0, 255)   # the luma map
     U = np.clip((U - 128) * (sat * 128 // 100) // 128 + 128, 0, 255)
     V = np.clip((V - 128) * (sat * 128 // 100) // 128 + 128, 0, 255)
     bh, bw = Y.shape

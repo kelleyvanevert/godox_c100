@@ -51,22 +51,10 @@ if [ "$SILENT" = "1" ]; then
     SPK_PATCHES="0x22b38:2d8200eb:0000a0e1 0x350f0:bf3800eb:0000a0e1 0x2ed50:a75100eb:0000a0e1"
 fi
 
-# --- look knobs (applied to each block's brightness before palette matching) ---
-# CONTRAST: percent, 100 = neutral. Higher = more dramatic (spreads midtones to
-#   the palette's dark/bright ends, good for flat/dim scenes); lower = softer.
-#   Useful range ~70..160 (e.g. CONTRAST=130 punchy, CONTRAST=85 gentle).
-# BRIGHT: luma offset, 0 = neutral. Positive lifts (lighter), negative darkens.
-#   Useful range ~ -60..60 (full -128..127).
-#   e.g.  CONTRAST=130 BRIGHT=10 sh tools/build.sh
-CONTRAST=${CONTRAST:-100}
-BRIGHT=${BRIGHT:-0}
-CFIX=$(( CONTRAST * 128 / 100 ))   # contrast in /128 fixed point (128 = neutral)
-BFIX=$(( BRIGHT + 128 ))           # bias so the assembler never sees a negative
-
 # --- assemble a patch: prints ADDR:OLDHEX:NEWHEX for patch_code.py ---
 asm() {  # asm NAME START END [extra llvm-mc args, e.g. --defsym=X=1]
     name=$1 start=$2 end=$3; shift 3
-    $LLVM/llvm-mc -triple=armv5te-none-eabi --defsym=CONTRAST_FIX=$CFIX --defsym=BRIGHT_FIX=$BFIX \
+    $LLVM/llvm-mc -triple=armv5te-none-eabi \
         -I build/obj "$@" -filetype=obj "tools/patches/$name.s" -o "build/obj/$name.o"
     set -- "$name" "$start" "$end"
     if $LLVM/llvm-readobj -r "build/obj/$1.o" | grep -q R_ARM; then
@@ -86,8 +74,9 @@ print(f'{start:#x}:{old.hex()}:{new.hex()}')
 }
 
 # --- code patches ---
-# Presets (match palettes x film colours), tags and display codes from
-# tools/palettes.py, included by the caves. The preset data is too big for the
+# Presets (match palettes x film colours) with their contrast and brightness,
+# rnd and the normal mode (no effect) on or off, tags and display codes from
+# tools/palettes.py (PRESETS_JSON), included by the caves. The preset data is too big for the
 # photo cave: it goes in the unused end of the video cave's dead range,
 # 0xbbc00-0xbc400 (see tools/patches/preset_data.s).
 python3 -I tools/palettes.py asm > build/obj/palettes.inc
@@ -97,7 +86,8 @@ nmsym() {  # nmsym OBJ LABEL: address of a label in an assembled cave
 PDATA=$(asm preset_data 0xbbc00 0xbc400)
 CAVE=$(asm photo_cave 0xbab6c 0xbb340 \
     --defsym=MATCH_ADDR=$(nmsym preset_data MATCH_PALETTES) --defsym=PMATCH_ADDR=$(nmsym preset_data PRESET_MATCH) \
-    --defsym=DPTRS_ADDR=$(nmsym preset_data DISPLAY_PTRS) --defsym=TAGS_ADDR=$(nmsym preset_data TAGS))  # dead FUN_000bab6c
+    --defsym=DPTRS_ADDR=$(nmsym preset_data DISPLAY_PTRS) --defsym=TAGS_ADDR=$(nmsym preset_data TAGS) \
+    --defsym=FX_ADDR=$(nmsym preset_data PRESET_FX))  # dead FUN_000bab6c
 sym() {  # address of a label in the assembled photo cave
     nmsym photo_cave "$1"
 }
@@ -124,14 +114,19 @@ fi
 # shutter-speed readout cells show the current one. Redirects the refresh's
 # tail call to 0x20fd0 (SS readout) at 0x21218 and the center key handler's
 # message post at 0x1ddf8 into a third cave in the same dead code,
-# 0xbc400-0xbc744. See tools/patches/lcd_cave.s.
+# 0xbc400-0xbc744. See tools/patches/lcd_cave.s. It also switches to the
+# factory's sizes in the normal mode (aspect slots 6, 7, 8, 10 and 13,
+# NORMAL_PATCHES below), redirecting the arrow keys' aspect change at 0x213e0
+# and the display's aspect bracket at 0x4a818 there too.
 LCDTAG=${LCDTAG:-1}
 LCD_PATCHES=""
 if [ "$LCDTAG" = "1" ]; then
     LCAVE=$(asm lcd_cave 0xbc400 0xbc744)
     LJUMP=$(asm lcd_jump 0x21218 0x2121c --defsym=HOOK=$(nmsym lcd_cave lcd_hook))
     KJUMP=$(asm key_jump 0x1ddf8 0x1ddfc --defsym=HOOK=$(nmsym lcd_cave center_hook))
-    LCD_PATCHES="$LCAVE $LJUMP $KJUMP"
+    AJUMP=$(asm aspect_jump 0x213e0 0x213e4 --defsym=HOOK=$(nmsym lcd_cave aspect_hook))
+    BJUMP=$(asm bracket_jump 0x4a818 0x4a81c --defsym=HOOK=$(nmsym lcd_cave bracket_hook))
+    LCD_PATCHES="$LCAVE $LJUMP $KJUMP $AJUMP $BJUMP"
 fi
 # Resolution jump table @0xf3d0 (ldrls pc,[pc,idx,lsl#2] @0xf3c8): entries hold
 # absolute handler addresses, so point each photo aspect ratio straight at its
@@ -145,8 +140,13 @@ jt() {  # jt ENTRY OLDHEX LABEL -> ENTRY:OLDHEX:<label address, little-endian>
 # photo's size (palettes.py SIZES, ~274k pixels; 640 wide until v019).
 # SMALLVID=0 keeps the stock full-size video.
 SMALLVID=${SMALLVID:-1}
+# The normal mode uses the factory's sizes: its aspects are slots 6, 7,
+# 8, 10 and 13 (lcd_cave.s NIDX), whose entries in both tables become the factory
+# handlers of aspects 0-4, copied from the original (nothing else uses those slots).
+NORMAL_PATCHES="0xf3e8:10f70000:9cf70000 0xf3ec:24f70000:9cf70000 0xf3f0:38f70000:b0f70000 0xf3f8:4cf70000:c4f70000 0xf404:88f70000:d4f60000"
 VID_PATCHES=""
 if [ "$SMALLVID" = "1" ]; then
+    NORMAL_PATCHES="$NORMAL_PATCHES 0xf0b8:58f60000:f8f50000 0xf0bc:68f60000:f8f50000 0xf0c0:d8f70000:a8f60000 0xf0c8:d8f70000:88f60000 0xf0d4:d8f70000:98f60000"
     VID_PATCHES="$(jt 0xf0a0 f8f50000 vid169) $(jt 0xf0a4 f8f50000 vid169) $(jt 0xf0c4 f8f50000 vid169)
         $(jt 0xf0a8 a8f60000 vid32) $(jt 0xf0ac 88f60000 vid43) $(jt 0xf0b0 98f60000 vid11)"
 fi
@@ -157,6 +157,7 @@ python3 tools/patch_code.py "$OUT" "$OUT" \
     "$(jt 0xf3d8 b0f70000 stub32)" \
     "$(jt 0xf3dc c4f70000 photo43)" \
     "$(jt 0xf3e0 d4f60000 stub11)" \
+    $NORMAL_PATCHES \
     "$(jt 0xf3fc 60f70000 photo43)" \
     "$(jt 0xf400 74f70000 photo43)" \
     $VID_PATCHES \

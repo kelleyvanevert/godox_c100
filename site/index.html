@@ -94,7 +94,7 @@
           Every photo and video is shrunk to about 274k pixels (640&times;428 for 3:2), matched against
           a small colour palette with ordered dithering, then painted with a film
           simulation applied. The chosen look is stamped in the top right corner.
-          Pressing the <strong>center button</strong> switches between the presets;
+          Pressing the <strong>center button</strong> switches between the looks;
           the camera remembers your choice when you turn it off.
         </p>
         <ul class="presets">
@@ -114,6 +114,10 @@
             <img class="cam-tag" src="img/tags/rnd.png" width="39" height="21" alt="rnd" />
             <span>Chooses a random look for every shot</span>
           </li>
+          <li>
+            <img class="cam-tag" src="img/tags/nor.png" width="39" height="21" alt="nor" />
+            <span>Normal mode: no effect, photos and video as the camera takes them, at its full sizes</span>
+          </li>
         </ul>
         <p>Oh, and the beeps are gone: the camera is completely silent now (also no hissing sound)</p>
       </section>
@@ -128,11 +132,11 @@
           <li>
             <h3>Put the firmware to the SD</h3>
             <p class="download">
-              <a class="button" href="editor/v022_editor_template.bin" download="GP_CARDVR_UPGRADE.BIN"
+              <a class="button" href="editor/v023_editor_template.bin" download="GP_CARDVR_UPGRADE.BIN"
                   onclick="posthog.capture('download_firmware')"
                 >Download firmware</a
               >
-              <span>v022 &middot; 1.8&nbsp;MB</span>
+              <span>v023 &middot; 1.8&nbsp;MB</span>
             </p>
             <p>
               Download the firmware and put it in the root of the camera's SD card, naming it exactly: <code>GP_CARDVR_UPGRADE.BIN</code>
@@ -170,7 +174,7 @@
         <header class="editor-head">
           <h2 id="editor-title">Make your own</h2>
           <p class="ed-small-note">
-            You can also make your own version of the firmware here, with your own palettes, film looks
+            You can also make your own version of the firmware here, with your own looks (colours, film grading)
             and sounds. The editor only works well on a bigger screen though, so open this page on a
             desktop or laptop to try it.
           </p>
@@ -181,7 +185,7 @@
             <h3 id="ed-config-title">Config</h3>
             <label class="ed-check">
               <input type="checkbox" id="ed-tags" />
-              Show the palette's tag in the top right corner of pictures and videos
+              Show the look's tag in the top right corner of pictures and videos
             </label>
           </section>
           <section class="ed-dims" aria-labelledby="ed-dims-title">
@@ -194,14 +198,19 @@
         </div>
 
         <div class="editor-grid">
-          <aside class="ed-presets" aria-label="Palettes">
-            <h3>Palettes <span class="ed-count" id="ed-count"></span></h3>
-            <p class="note">Create up to <span id="ed-max">8</span> palettes.</p>
+          <aside class="ed-presets" aria-label="Looks">
+            <h3>Looks <span class="ed-count" id="ed-count"></span></h3>
+            <p class="note">Create up to <span id="ed-max">8</span> looks.</p>
             <ol class="ed-list" id="ed-list"></ol>
             <label class="ed-check ed-rnd">
               <input type="checkbox" id="ed-rnd" />
               <img class="cam-tag" src="img/tags/rnd.png" width="39" height="21" alt="rnd" />
-              also a random palette per photo
+              random look per photo
+            </label>
+            <label class="ed-check ed-rnd ed-nor">
+              <input type="checkbox" id="ed-normal" />
+              <img class="cam-tag" src="img/tags/nor.png" width="39" height="21" alt="nor" />
+              <span>normal mode: no effect, photos and video at the factory's full sizes</span>
             </label>
           </aside>
 
@@ -216,7 +225,7 @@
                   (Your pictures stay on your computer, by the way.)
                 </p>
               </div>
-              <div class="ed-palette" id="ed-palette" aria-label="Selected palette"></div>
+              <div class="ed-palette" id="ed-palette" aria-label="Selected look"></div>
             </div>
           </div>
         </div>

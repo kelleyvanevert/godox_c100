@@ -23,7 +23,7 @@
 - site/editor/photos/: the preview photos.
 - site/img/tags/: the current presets' tags as the camera draws them
   (13x7-ish PNGs, one pixel per font cell), for the page's preset list; and
-  rnd, in black and white, its letters shaped like the display's.
+  rnd and nor (the normal mode), in black and white, letters shaped like the display's.
 
 tools/editor_check.sh then checks the editor's patcher against build.sh.
 """
@@ -33,7 +33,7 @@ import palettes as P
 from gp_res import parse
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-TEMPLATE = 'v022_editor_template.bin'
+TEMPLATE = 'v023_editor_template.bin'
 SITE = os.path.join(ROOT, 'site', 'editor')
 ORIG = os.path.join(ROOT, 'c100_v1.1.6_20260929', 'GP_CARDVR_UPGRADE.BIN')
 APP = 0x10200                     # file offset of RAM address 0
@@ -98,14 +98,20 @@ def manifest(fw):
     photo, lcd, data = symbols('photo_cave.o'), symbols('lcd_cave.o'), symbols('preset_data.o')
     video = symbols('video_cave.o')
     for label, key in (('MATCH_PALETTES', 'MATCH'), ('PRESET_MATCH', 'PMATCH'), ('TAGS', 'TAGS'),
-                       ('DISPLAY', 'DISPLAY'), ('DISPLAY_PTRS', 'DPTRS'), ('PRESET_DATA_END', 'END')):
+                       ('DISPLAY', 'DISPLAY'), ('DISPLAY_PTRS', 'DPTRS'), ('PRESET_FX', 'FX'),
+                       ('PRESET_DATA_END', 'END')):
         assert data[label] == P.PD[key], f'{label} at {data[label]:#x}, palettes.py PD says {P.PD[key]:#x}'
     npal = [photo[k] for k in ('npal_fill', 'npal_pick1', 'npal_pick2', 'npal_pick3')] + \
-           [lcd[k] for k in ('npal_lcd', 'npal_center')]
+           [lcd[k] for k in ('npal_lcd', 'npal_lcd2')]
+    npal1 = [photo['npal1_fill']] + [lcd[k] for k in ('npal1_center', 'npal1_normal')]
+    mode_max = [photo['max_fill']] + [lcd[k] for k in ('max_lcd', 'max_center', 'max_normal')]
     n = len(P.builtin_config()['presets'])
     for a in npal:                       # data-processing immediate, rotation 0: the low byte is NPAL
         assert fw[APP + a] == n and fw[APP + a + 1] & 0x0f == 0, f'{a:#x} is not an immediate {n}'
+    for a in npal1 + mode_max:           # NPAL + 1 = the last mode, the normal one (on)
+        assert fw[APP + a] == n + 1 and fw[APP + a + 1] & 0x0f == 0, f'{a:#x} is not an immediate {n + 1}'
     assert fw[APP + lcd['last_center']] == n                       # NPAL - 1 + RND_MODE, rnd on
+    assert fw[APP + lcd['after_last']] == n + 1                    # then the normal mode
     table = [int.from_bytes(fw[APP + photo['SIZES'] + 4 * i:APP + photo['SIZES'] + 4 * i + 4], 'little')
              for i in range(16)]
     assert table == [x for c, o in P.SIZES.values() for x in (*o, *c)], table   # W, H, CW, CH per aspect
@@ -122,6 +128,7 @@ def manifest(fw):
         'maxPresets': P.MAX_PRESETS,
         'maxColours': P.NMAX,
         'pd': P.PD,
+        'fx': {'bytes': P.FX_BYTES, 'contrast': P.CONTRAST_RANGE, 'brightness': P.BRIGHTNESS_RANGE},
         'tag': {'letters': P.TAG_LETTERS, 'rows': P.TAG_ROWS, 'cols': P.TAG_COLS, 'bytes': P.TAG_BYTES,
                 'scale': P.TAG_SCALE, 'top': P.TAG_TOP, 'right': P.TAG_RIGHT},
         'font': P.FONT,
@@ -130,8 +137,12 @@ def manifest(fw):
         'ssCount': P.SS_COUNT,
         'ssCells': P.SS_CELLS,
         'rndLcd': P.lcd_segments(P.RND),
+        'norLcd': P.lcd_segments(P.NORMAL),
         'npal': npal,
+        'npal1': npal1,
+        'modeMax': mode_max,
         'lastCenter': lcd['last_center'],
+        'afterLast': lcd['after_last'],
         'speaker': [[addr, on, NOP] for addr, on in SPEAKER],
         'slots': {'shutter': slots['CAMERA.WAV'], 'poweron': slots['POWERON_AUDIO.WAV'],
                   'click': slots['CLICK.WAV']},
@@ -189,8 +200,9 @@ def main():
     os.makedirs(tags, exist_ok=True)
     for p in P.builtin_config()['presets']:
         tag_png(Image, p['tag'], p['paint']).save(os.path.join(tags, f'{p["tag"]}.png'))
-    # rnd has no palette of its own: black and white
-    tag_png(Image, P.RND, [(0, 128, 128), (255, 128, 128)]).save(os.path.join(tags, 'rnd.png'))
+    # rnd and nor have no palette of their own: black and white
+    for tag in (P.RND, P.NORMAL):
+        tag_png(Image, tag, [(0, 128, 128), (255, 128, 128)]).save(os.path.join(tags, f'{tag}.png'))
     for old in glob.glob(os.path.join(SITE, 'photos', '*')):
         os.remove(old)
     for src in PHOTOS:

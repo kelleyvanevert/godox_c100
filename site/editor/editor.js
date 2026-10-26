@@ -1,7 +1,8 @@
-// The firmware editor: 8 preset slots (palette, S-curve, film, tag, display code), each
-// on or off, rnd, tags on or off, photo sizes and sounds; previewed on four photos, kept in localStorage,
+// The firmware editor: 8 preset slots (palette, S-curve, film, contrast, brightness, tag,
+// display code), each on or off, rnd and the normal mode, tags on or off, photo sizes
+// and sounds; previewed on nine photos, kept in localStorage,
 // and built into a firmware in the browser (firmware.js) from the template.
-import { buildFirmware, configErrors, cropFor, encodeWav, hexToYuv, sha256, sizeErrors, slotSamples, tagCells, tagColours, tagWidth, yuvToHex, yuvToRgb } from "./firmware.js";
+import { buildFirmware, configErrors, cropFor, encodeWav, hexToYuv, lumaMap, sha256, sizeErrors, slotSamples, tagCells, tagColours, tagWidth, yuvToHex, yuvToRgb } from "./firmware.js";
 import { paintColours } from "./films.js";
 import { buildLut, cameraFrame, render } from "./sim.js";
 
@@ -61,6 +62,8 @@ function slotFrom(item, on) {
     colours: item.colours.map((c) => [...c]),
     curve: !!item.curve,
     film: item.film,
+    contrast: 0,
+    brightness: 0,
     sel: 0,
   };
 }
@@ -75,6 +78,7 @@ function defaultState() {
     slots,
     selected: slots[0].id,
     rnd: true,
+    normal: true,
     tags: true,
     sizes: defaultSizes(),
     sounds: { on: false, shutter: { src: "stock" }, poweron: { src: "stock" } },
@@ -90,10 +94,13 @@ function load() {
         // the S-curve used to be one of the films
         if (p.film === "scurve") Object.assign(p, { film: null, curve: true });
         p.curve = !!p.curve;
+        p.contrast ??= 0;
+        p.brightness ??= 0;
       }
       // the preview photos changed: own photos don't carry over
       if (saved.photos?.length !== PHOTOS.length) saved.photos = noPhotos();
       saved.tags ??= true;
+      saved.normal ??= true;
       if (Object.keys(saved.sizes ?? {}).join() !== Object.keys(m.sizes).join()) saved.sizes = defaultSizes();
       return saved;
     }
@@ -119,6 +126,8 @@ function save() {
 const current = () => state.slots.find((p) => p.id === state.selected) ?? state.slots[0];
 const enabled = () => state.slots.filter((p) => p.on);
 const film = (p) => library.films.find((f) => f.id === p.film) ?? null;
+// rnd picks among the palettes that are on, so it needs two
+const rndOffered = () => enabled().length > 1;
 
 async function paintOf(p) {
   const key = `${p.film}|${p.curve}|${p.colours.join(" ")}`;
@@ -129,14 +138,18 @@ async function paintOf(p) {
 async function config() {
   const on = enabled();
   return {
-    presets: await Promise.all(
-      on.map(async (p) => ({ tag: p.tag, match: p.colours, paint: await paintOf(p), lcd: p.lcd })),
-    ),
-    rnd: state.rnd && on.length > 1,
+    presets: await Promise.all(on.map(async (p) => presetOf(p, await paintOf(p)))),
+    rnd: state.rnd && rndOffered(),
+    normal: state.normal,
     sounds: state.sounds.on,
     tags: state.tags,
     sizes: state.sizes,
   };
+}
+
+// A slot as the firmware takes it (firmware.js), given its paint colours.
+function presetOf(p, paint) {
+  return { tag: p.tag, match: p.colours, paint, contrast: p.contrast, brightness: p.brightness, lcd: p.lcd };
 }
 
 function changed({ list = true, palette = false, preview = true } = {}) {
@@ -326,8 +339,9 @@ function renderList() {
     )
     .join("");
   const rnd = $("#ed-rnd");
-  rnd.checked = state.rnd && on > 1;
-  rnd.disabled = on < 2;
+  rnd.checked = state.rnd && rndOffered();
+  rnd.disabled = !rndOffered();
+  $("#ed-normal").checked = state.normal;
   renderStrips();
 }
 
@@ -463,10 +477,20 @@ async function renderHead() {
   const f = film(p);
   $("#ed-work-head").innerHTML = `
     ${state.tags ? tagCanvas("ed-tagc", p.tag, 3, false) : ""}
-    <span><strong>Preview and edit this palette</strong> &middot; ${esc(p.name)}${p.curve ? " &middot; S-curve" : ""}${f ? ` &middot; ${esc(f.name)}` : ""}</span>`;
+    <span><strong>Preview and edit this look</strong> &middot; ${esc(p.name)}${lookNote(p, f)}</span>`;
   const paint = await paintOf(p);
   const canvas = $("#ed-work-head .ed-tagc");
   if (canvas && current() === p) drawTag(canvas, p.tag, paint, 3, false);
+}
+
+const signed = (x) => (x > 0 ? `+${x}` : `${x}`);
+
+function lookNote(p, f) {
+  return (
+    (p.curve ? " &middot; S-curve" : "") + (f ? ` &middot; ${esc(f.name)}` : "") +
+    (p.contrast ? ` &middot; contrast ${signed(p.contrast)}%` : "") +
+    (p.brightness ? ` &middot; brightness ${signed(p.brightness)}` : "")
+  );
 }
 
 function tagProblem(p) {
@@ -475,8 +499,24 @@ function tagProblem(p) {
   const bad = [...p.tag].find((ch) => !m.font[ch]);
   if (bad) return `No "${bad}" in the camera's tag font.`;
   if (tagWidth(m, p.tag) > m.tag.cols) return "Too wide for the photo tag (its W is extra wide).";
-  if (p.on && enabled().some((q) => q !== p && q.tag === p.tag)) return "Another palette already has this tag.";
+  if (p.on && enabled().some((q) => q !== p && q.tag === p.tag)) return "Another look already has this tag.";
   return "";
+}
+
+// Contrast and brightness: a slider each, applied to the luma before matching.
+const FX_LABELS = { contrast: "Contrast", brightness: "Brightness" };
+const fxText = (k, v) => signed(v) + (k === "contrast" ? "%" : "");
+
+function fxRow(p, k) {
+  const [lo, hi] = m.fx[k];
+  return `
+    <div class="ed-row ed-fx" data-k="${k}">
+      <label for="ed-${k}">${FX_LABELS[k]}</label>
+      <input type="range" id="ed-${k}" min="${lo}" max="${hi}" step="1" value="${p[k]}" />
+      <output for="ed-${k}" id="ed-${k}-out">${fxText(k, p[k])}</output>
+      <button type="button" class="ed-fx-reset" data-k="${k}" title="Back to 0" aria-label="Reset the ${k}"
+        ${p[k] ? "" : "disabled"}>${RESET_ICON}</button>
+    </div>`;
 }
 
 function renderPalette() {
@@ -500,6 +540,8 @@ function renderPalette() {
         ${library.films.map((f) => `<option value="${f.id}" ${f.id === p.film ? "selected" : ""}>${esc(f.name)}</option>`).join("")}
       </select>
     </div>
+    ${fxRow(p, "contrast")}
+    ${fxRow(p, "brightness")}
     <div class="ed-row ed-tagrow" ${state.tags ? "" : "hidden"}>
       <label for="ed-tag">Tag</label>
       <input id="ed-tag" value="${esc(p.tag)}" maxlength="3" autocomplete="off" spellcheck="false" />
@@ -543,11 +585,21 @@ function renderPalette() {
   renderTagShown();
 }
 
+function setFx(p, k, v) {
+  p[k] = v;
+  $(`#ed-${k}`).value = v;
+  $(`#ed-${k}-out`).textContent = fxText(k, v);
+  $(`.ed-fx-reset[data-k="${k}"]`).disabled = !v;
+  changed({ list: false });
+}
+
 // ---- colours as text: hex codes separated by spaces and/or commas ----
 
 const PICKER_ICON = `<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
   <rect x="1.5" y="1.5" width="13" height="9" fill="none" stroke="currentColor" stroke-width="1.5" />
   <rect x="1.5" y="12.5" width="13" height="2" fill="currentColor" /><circle cx="10" cy="5" r="1.6" fill="currentColor" /></svg>`;
+const RESET_ICON = `<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.75">
+  <path d="M3.5 8a4.5 4.5 0 1 0 1.3-3.2" /><path d="M4.5 1.8v3.2h3.2" /></svg>`;
 const TEXT_ICON = `<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="currentColor">
   <rect x="1" y="2.5" width="14" height="2" /><rect x="1" y="7" width="10" height="2" /><rect x="1" y="11.5" width="12" height="2" /></svg>`;
 
@@ -753,6 +805,8 @@ function pickerPointer(e) {
 
 function paletteInput(e) {
   const p = current();
+  const fx = e.target.closest(".ed-fx");
+  if (fx && e.target.type === "range") return setFx(p, fx.dataset.k, +e.target.value);
   if (e.target.id === "ed-tag") {
     const caret = e.target.selectionStart;
     p.tag = e.target.value.toUpperCase().slice(0, 3);
@@ -809,7 +863,8 @@ function paletteChange(e) {
     track("toggle_display_follows_tag", { on: p.lcdAuto });
     return changed({ palette: true, preview: false });
   }
-  // typing is tracked once it's done (the input loses focus)
+  // dragging and typing are tracked once they're done
+  if (e.target.closest(".ed-fx")) track(`change_${e.target.closest(".ed-fx").dataset.k}`, { value: +e.target.value });
   if (e.target.id === "ed-tag") track("change_tag", { tag: p.tag, problem: tagProblem(p) || null });
   if (e.target.id === "ed-hex") {
     track("pick_colour", { via: "hex", hex: yuvToHex(p.colours[p.sel]).toUpperCase() });
@@ -826,6 +881,11 @@ function paletteChange(e) {
 
 function paletteClick(e) {
   const p = current();
+  const reset = e.target.closest(".ed-fx-reset");
+  if (reset) {
+    track(`reset_${reset.dataset.k}`);
+    return setFx(p, reset.dataset.k, 0);
+  }
   const at = e.target.closest("#ed-lcd") && segAt(e);
   if (at) {
     const cur = p.lcd[at.cell];
@@ -886,7 +946,7 @@ async function renderPreview() {
   const paint = await paintOf(p);
   if (current() !== p) return;
   const drawable = state.tags && [...p.tag].every((ch) => m.font[ch]) && tagWidth(m, p.tag) <= m.tag.cols;
-  const preset = { tag: drawable ? p.tag : "", match: p.colours, paint };
+  const preset = { tag: drawable ? p.tag : "", match: p.colours, paint, ymap: lumaMap(p) };
   const lut = buildLut(preset.match, m.wy);
   document.querySelectorAll(".ed-photo canvas").forEach((canvas, i) => {
     const frame = frames[i];
@@ -1163,17 +1223,18 @@ async function soundEvents(e) {
 function renderDownload() {
   const on = enabled();
   const errors = configErrors(m, {
-    presets: on.map((p) => ({ tag: p.tag, match: p.colours, paint: p.colours, lcd: p.lcd })),
-    rnd: state.rnd,
+    presets: on.map((p) => presetOf(p, p.colours)),
+    rnd: state.rnd && rndOffered(),
+    normal: state.normal,
     sounds: state.sounds.on,
     tags: state.tags,
     sizes: state.sizes,
   });
-  const rnd = state.rnd && on.length > 1;
+  const rnd = state.rnd && rndOffered();
   const sized = Object.keys(m.sizes).some((k) => !sameSize(state.sizes[k], m.sizes[k]));
   $("#ed-summary").textContent =
-    `${on.length} palette${on.length === 1 ? "" : "s"} (${on.map((p) => (state.tags ? p.tag || "?" : p.name)).join(", ")})` +
-    `${rnd ? " + rnd" : ""} · ${state.tags ? "tagged" : "no tags"}${sized ? " · own sizes" : ""}` +
+    `${on.length} look${on.length === 1 ? "" : "s"} (${on.map((p) => (state.tags ? p.tag || "?" : p.name)).join(", ")})` +
+    `${rnd ? " + rnd" : ""}${state.normal ? " + nor" : ""} · ${state.tags ? "tagged" : "no tags"}${sized ? " · own sizes" : ""}` +
     ` · ${state.sounds.on ? "sounds on" : "silent"}`;
   $("#ed-errors").innerHTML = errors.map((e) => `<li>${esc(e)}</li>`).join("");
   $("#ed-download").disabled = errors.length > 0;
@@ -1186,7 +1247,10 @@ function downloadProps() {
     palettes: on.length,
     tags: on.map((p) => p.tag),
     films: on.map((p) => film(p)?.name ?? "none"),
-    rnd: state.rnd && on.length > 1,
+    contrast: on.map((p) => p.contrast),
+    brightness: on.map((p) => p.brightness),
+    rnd: state.rnd && rndOffered(),
+    normal: state.normal,
     tagged: state.tags,
     sizes: Object.values(state.sizes).map((s) => s.join("x")),
     sounds: state.sounds.on,
@@ -1248,6 +1312,11 @@ async function main() {
     changed({ preview: false });
     track("toggle_rnd", { on: state.rnd });
   });
+  $("#ed-normal").addEventListener("change", (e) => {
+    state.normal = e.target.checked;
+    changed({ preview: false });
+    track("toggle_normal", { on: state.normal });
+  });
   $("#ed-tags").addEventListener("change", (e) => {
     state.tags = e.target.checked;
     track("toggle_tags", { on: state.tags });
@@ -1287,7 +1356,7 @@ async function main() {
   sounds.addEventListener("click", soundEvents);
   $("#ed-download").addEventListener("click", download);
   $("#ed-reset-all").addEventListener("click", async () => {
-    const sure = confirm("Start over? This forgets your palettes, sounds and photos.");
+    const sure = confirm("Start over? This forgets your looks, sounds and photos.");
     track("start_over", { confirmed: sure });
     if (!sure) return;
     state = defaultState();

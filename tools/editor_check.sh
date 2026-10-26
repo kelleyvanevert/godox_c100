@@ -1,6 +1,7 @@
 #!/bin/sh
 # Check the site's firmware editor against build.sh: for random configs (1-8
-# presets of 1-32 colours, random tags, display segments, rnd on/off, sounds
+# presets of 1-32 colours, random contrast and brightness, random tags,
+# display segments, rnd and the normal mode on/off, sounds
 # on/off, tags on/off, random photo sizes, random and stock WAVs), the
 # editor's patched template must equal what build.sh assembles from the same
 # config, byte for byte.

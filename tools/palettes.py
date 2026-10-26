@@ -298,10 +298,10 @@ FONT = {  # rows top to bottom, 3 pixels each (W: 5)
     '4': ['101', '101', '111', '001', '001'], '5': ['111', '100', '111', '001', '111'],
     '7': ['111', '001', '010', '010', '010'], '8': ['111', '101', '111', '101', '111'],
     '9': ['111', '101', '111', '001', '111'], '-': ['000', '000', '111', '000', '000'],
-    # lowercase r, n, d shaped as the display's 7-segment rnd (eg, ceg, bcdeg),
-    # for the site's rnd tag; preset tags are uppercase
+    # lowercase r, n, d, o shaped as the display's 7-segment rnd and nor (eg,
+    # ceg, bcdeg, cdeg), for the site's rnd and nor tags; preset tags are uppercase
     'r': ['000', '000', '111', '100', '100'], 'n': ['000', '000', '111', '101', '101'],
-    'd': ['001', '001', '111', '101', '111'],
+    'd': ['001', '001', '111', '101', '111'], 'o': ['000', '000', '111', '101', '111'],
 }
 TAG_LETTERS = 3
 TAG_ROWS, TAG_COLS = 7, 4 * TAG_LETTERS + 1  # 3 letters, 1-pixel gaps, plus the outline (firmware)
@@ -347,9 +347,9 @@ def tag_colours(cols):
 # mirrored cells: full left side + bottom + lower right, then lower left +
 # bottom + full right side.
 SEG7 = {'E': 'adefg', 'F': 'aefg', 'P': 'abefg', '6': 'acdefg', '8': 'abcdefg',
-        'W<': 'cdef', 'W>': 'bcde', 'r': 'eg', 'n': 'ceg', 'd': 'bcdeg'}
+        'W<': 'cdef', 'W>': 'bcde', 'r': 'eg', 'n': 'ceg', 'd': 'bcdeg', 'o': 'cdeg'}
 LCD = {'EP6': ['E', 'P', '6'], '6FP': ['6', 'F', 'P'], 'BW': ['8', 'W<', 'W>'],
-       RND: ['r', 'n', 'd']}
+       RND: ['r', 'n', 'd'], 'nor': ['n', 'o', 'r']}
 # Segment -> (HT1621 address, COM) for each SS cell, left to right, found by
 # running the firmware's SS digit routines (FUN_0004a374, FUN_0004a1f0,
 # FUN_0004a074) for 0..9 in tools/emu_seg.py. Each cell is wired differently.
@@ -390,14 +390,35 @@ def lcd_nibbles(segments):
 # read from PRESETS_JSON (the site's editor writes the same shape). The preset data
 # has a fixed layout with room for MAX_PRESETS of NMAX colours, so the editor
 # can patch any config into one template build (tools/editor_data.py).
+# Optional per preset (2026-10-26):
+#   contrast    percent added around mid-grey, CONTRAST_RANGE, 0 = as shot
+#   brightness  luma levels added, BRIGHTNESS_RANGE, 0 = as shot
+# (the preset's luma map, built by lut_fill: Y' = (Y - 128) * fix // 128 + 128 +
+# brightness, clamped to 0..255, fix = (100 + contrast) * 128 // 100).
+# And (optional, default false) 'normal': the center button also offers the
+# normal mode after rnd (from Donald Sayers' fork): no effect at all, photos and
+# video as the factory makes them, at the factory's sizes. Its code is NORMAL.
 MAX_PRESETS = 8
 SEGMENTS = 'abcdefg'
+CONTRAST_RANGE = BRIGHTNESS_RANGE = (-50, 50)
+NORMAL = 'nor'
 
 
 def builtin_config():
     return {'presets': [{'tag': tag, 'match': [list(c) for c in cols], 'paint': [list(c) for c in disp],
                          'lcd': lcd_segments(tag)} for tag, cols, disp in presets()],
-            'rnd': True}
+            'rnd': True, 'normal': True}
+
+
+def contrast_fix(p):
+    """The luma map's slope in /128 (128 = as shot)."""
+    return (100 + p.get('contrast', 0)) * 128 // 100
+
+
+def luma_map(p):
+    """What lut_fill puts in the preset's 256-byte luma map."""
+    fix, b = contrast_fix(p), p.get('brightness', 0)
+    return [max(0, min(255, ((y - 128) * fix >> 7) + 128 + b)) for y in range(256)]
 
 
 def tag_width(text):
@@ -409,9 +430,12 @@ def check_config(cfg):
     assert 1 <= len(pre) <= MAX_PRESETS, f'{len(pre)} presets: 1..{MAX_PRESETS}'
     assert isinstance(cfg['rnd'], bool)
     assert isinstance(cfg.get('tags', True), bool)
+    assert isinstance(cfg.get('normal', False), bool)
     for p in pre:
         assert 1 <= len(p['match']) <= NMAX and len(p['paint']) == len(p['match']), p['tag']
         assert all(len(c) == 3 and all(0 <= x <= 255 for x in c) for c in p['match'] + p['paint']), p['tag']
+        assert all(isinstance(p.get(k, 0), int) and lo <= p.get(k, 0) <= hi
+                   for k, (lo, hi) in (('contrast', CONTRAST_RANGE), ('brightness', BRIGHTNESS_RANGE))), p['tag']
         if cfg.get('tags', True):
             assert 1 <= len(p['tag']) <= TAG_LETTERS and all(ch in FONT for ch in p['tag']), p['tag']
             assert tag_width(p['tag']) <= TAG_COLS, f'tag {p["tag"]} is too wide'
@@ -438,14 +462,23 @@ def config_presets():
 # table has room for MAX_PRESETS, so the addresses never move.
 NCOL_BYTES = 3 * NMAX
 TAG_BYTES = (TAG_ROWS * TAG_COLS + 3) // 4 + 2   # 2-bit cells, dark and light offset
+# PRESET_FX, per preset: a flags byte (0, for kinds of preset to come, e.g. a
+# Game Boy look), the luma map's contrast_fix, its brightness (a signed byte),
+# a spare byte.
+FX_BYTES = 4
 PD = {'MATCH': 0xbbc00}
 PD['PMATCH'] = PD['MATCH'] + MAX_PRESETS * (1 + NCOL_BYTES)
 PD['TAGS'] = PD['PMATCH'] + MAX_PRESETS
 PD['DISPLAY'] = PD['TAGS'] + MAX_PRESETS * TAG_BYTES
 PD['DPTRS'] = (PD['DISPLAY'] + MAX_PRESETS * NCOL_BYTES + 3) // 4 * 4
-PD['END'] = PD['DPTRS'] + 4 * MAX_PRESETS
+PD['FX'] = PD['DPTRS'] + 4 * MAX_PRESETS
+PD['END'] = PD['FX'] + FX_BYTES * MAX_PRESETS
 assert PD['END'] <= 0xbc400
-LCD_BYTES = (MAX_PRESETS + 1) * SS_COUNT       # LCD_TAGS in lcd_cave.s: presets, then rnd
+LCD_BYTES = (MAX_PRESETS + 2) * SS_COUNT       # LCD_TAGS in lcd_cave.s: MAX_PRESETS presets, rnd, nor
+
+
+def fx_bytes(p):
+    return [0, contrast_fix(p), p.get('brightness', 0) & 0xff, 0]
 
 
 def tag_bytes(tag, paint):
@@ -464,6 +497,7 @@ def main():
         print('@ Generated by tools/palettes.py asm -- do not edit.')
         print(f'    .equ    NPAL, {n}                      @ presets; mode NPAL = random')
         print(f'    .equ    RND_MODE, {int(cfg["rnd"])}                  @ 1 = the center button offers rnd')
+        print(f'    .equ    NORMAL_MODE, {int(cfg.get("normal", False))}               @ 1 = and then the normal mode')
         print(f'    .equ    MAX_PRESETS, {MAX_PRESETS}')
         for k, v in PD.items():
             print(f'    .equ    PD_{k}, {v:#x}')
@@ -472,6 +506,12 @@ def main():
             print(f'    .byte {len(p["match"])}, {flat(p["match"])}   @ {p["tag"]}')
         print(f'    .space  {PD["PMATCH"] - PD["MATCH"] - sum(1 + 3 * len(p["match"]) for p in pre)}')
         print('    .endm')
+        print('    .macro  PRESET_FX_DATA                @ per preset: flags, contrast_fix, brightness, 0')
+        for p in pre:
+            print('    .byte ' + ', '.join(map(str, fx_bytes(p))) + f'   @ {p["tag"]}')
+        print(f'    .space  {FX_BYTES * (MAX_PRESETS - n)}' if n < MAX_PRESETS else '')
+        print('    .endm')
+        print(f'    .equ    FX_BYTES, {FX_BYTES}')
         print('    .macro  PRESET_MATCH_DATA             @ per preset: index of its match palette')
         print('    .byte ' + ', '.join(str(i) for i in range(n)))
         print(f'    .space  {MAX_PRESETS - n}' if n < MAX_PRESETS else '')
@@ -509,11 +549,14 @@ def main():
         print('    .endm')
         print(f'    .equ    SS_FIRST, {SS_FIRST:#x}')
         print(f'    .equ    SS_COUNT, {SS_COUNT}')
-        print(f'    .macro  LCD_TAG_DATA                  @ per mode (presets, then rnd): HT1621 nibbles'
-              f' for addresses {SS_FIRST:#x}..{SS_FIRST + SS_COUNT - 1:#x}')
-        for p in pre + [{'tag': RND, 'lcd': lcd_segments(RND)}]:
-            print('    .byte ' + ', '.join(map(str, lcd_nibbles(p['lcd']))) + f'   @ {p["tag"]} {"/".join(p["lcd"])}')
+        print(f'    .macro  LCD_TAG_DATA                  @ per mode (MAX_PRESETS presets, rnd, nor): HT1621'
+              f' nibbles for addresses {SS_FIRST:#x}..{SS_FIRST + SS_COUNT - 1:#x}')
+        line = lambda tag, lcd: print('    .byte ' + ', '.join(map(str, lcd_nibbles(lcd))) + f'   @ {tag} {"/".join(lcd)}')
+        for p in pre:
+            line(p['tag'], p['lcd'])
         print(f'    .space  {SS_COUNT * (MAX_PRESETS - n)}' if n < MAX_PRESETS else '')
+        for code in (RND, NORMAL):
+            line(code, lcd_segments(code))
         print('    .endm')
         return
     for tag, cols, disp in presets():

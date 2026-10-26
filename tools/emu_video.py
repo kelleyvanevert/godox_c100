@@ -28,7 +28,7 @@ from unicorn import Uc, UC_ARCH_ARM, UC_MODE_ARM, UC_HOOK_BLOCK, UC_HOOK_CODE
 from unicorn.arm_const import *
 import emu_cave
 from emu_cave import FW, APP, CACHE_INV, CACHE_CLEAN, MALLOC, TICK, ROWS, pack, symbols, unpack, differing
-from palettes import LUT, SIZES, WY, config_presets
+from palettes import LUT, SIZES, WY, config
 from sim_palette import add_tag, match, prepare
 
 RESUME = 0x18d18
@@ -81,12 +81,13 @@ def run_strip(uc, entry, tick, ts=0x1004):
 def main():
     photo, timing = sys.argv[1], '--timing' in sys.argv[2:]
     psym, vsym = symbols(), symbols('build/obj/video_cave.o')
-    pre = config_presets()                            # as build.sh built them (PRESETS_JSON)
+    cfg = config()                                    # as build.sh built them (PRESETS_JSON)
+    pre, tags = cfg['presets'], cfg.get('tags', True)
     worst = 0
     for aspect, (_, (W, H)) in SIZES.items():
         emu_cave.W = W                                    # pack/unpack/differing use it
         print(f'-- {aspect} video, {W}x{H}')
-        per_strip = run_width(photo, W, timing, psym, vsym, pre)
+        per_strip = run_width(photo, W, timing, psym, vsym, pre, tags)
         worst = max(worst, per_strip[0])
         strips = math.ceil(H / ROWS)
         ms = strips * per_strip[1] / 310e3
@@ -104,7 +105,7 @@ def main():
     sys.exit(0 if worst == 0 and untouched else 1)
 
 
-def run_width(photo, W, timing, psym, vsym, pre):
+def run_width(photo, W, timing, psym, vsym, pre, tags):
     """(worst % differing, most instructions per strip) at one width."""
     STRIDE = W * 3 // 2
     src = prepare(photo, W)
@@ -123,10 +124,11 @@ def run_width(photo, W, timing, psym, vsym, pre):
         run_strip(uc, vsym['vhook'], tick, ts)
         most = max(most, count[0]) if label != 'new recording' else most   # without the table fill
         idx = struct.unpack('<I', uc.mem_read(psym['VARS'] + 8, 4))[0]
-        tag, P, D = pre[idx]
+        p = pre[idx]
+        tag, P, D = p['tag'], [tuple(c) for c in p['match']], [tuple(c) for c in p['paint']]
         Y, UV = unpack(bytes(uc.mem_read(STRIP, STRIDE * ROWS)))
-        ref = match(crop, P, wy=WY, lut=LUT)
-        if tagged:
+        ref = match(crop, P, wy=WY, lut=LUT, contrast=100 + p.get('contrast', 0), bright=p.get('brightness', 0))
+        if tagged and tags:
             add_tag(ref, tag, D)
         bar = np.zeros(ref.shape, bool)
         if timing:

@@ -16,7 +16,7 @@
 @ full buffer.
 @
 @ The per-block work is the photo hook's (photo_cave.s): average the 2x2
-@ luma, CONTRAST/BRIGHT, 4x4 Bayer, look (Y, U, V) up in the shared table,
+@ luma, the preset's luma map, 4x4 Bayer, look (Y, U, V) up in the shared table,
 @ paint the block. Strips start on 64-row boundaries, so the Bayer phase
 @ (band & 3) lines up across strips. The table and palette are the photo
 @ cave's (its VARS); a gap of >= 500 ms since the last strip means a new
@@ -41,6 +41,7 @@ base:
     .equ    PVARS,       PVARS_ADDR              @ photo cave VARS (from build.sh)
     .equ    LUT_PTR,     0                       @ offsets into PVARS
     .equ    CUR_PAL,     4
+    .equ    YMAP_BYTES,  256                     @ the luma map, right before the table (lut_fill)
     .equ    TICK,        0x126b80                @ FreeRTOS xTickCount
     .equ    NEWREC_MS,   500
     .equ    V_LAST,      0                       @ offsets into VVARS
@@ -87,7 +88,7 @@ cmp_max_w:                                @ (the editor patches the immediate)
     ldr     r5, [r0, #CUR_PAL]
     cmp     r12, #0
     cmpne   r5, #0
-    beq     vdone                         @ no table (allocation failed)
+    beq     vdone                         @ no table (allocation failed, or the normal mode)
     mov     r0, r11
     mov     r1, r7, lsl #6                @ the 64-row strip
     mov     lr, pc
@@ -112,14 +113,9 @@ pixloop:
     add     r0, r0, r1
     add     r0, r0, r2                    @ sum of 4 luma
     mov     r0, r0, lsr #2                @ repY
-    @ ---- contrast / brightness pre-map (assemble-time constants) ----
-    sub     r0, r0, #128
-    mov     r1, #CONTRAST_FIX
-    mul     r0, r1, r0
-    mov     r0, r0, asr #7
-    add     r0, r0, #128
-    add     r0, r0, #BRIGHT_FIX
-    sub     r0, r0, #128
+    @ ---- contrast / brightness: the preset's luma map (lut_fill) ----
+    add     r0, r12, r0
+    ldrb    r0, [r0, #-YMAP_BYTES]
     @ ---- Bayer dither: repY += (BAYER[b&3][c&3] - 8) * 4, clamped 0..255 ----
     adr     lr, BAYER
     and     r6, r10, #3

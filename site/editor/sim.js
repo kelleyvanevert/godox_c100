@@ -1,5 +1,6 @@
 // The camera's effect in the browser (tools/sim_palette.py with the camera's
-// lookup table): per 2x2 block the average luma plus a 4x4 Bayer offset, the
+// lookup table): per 2x2 block the average luma through the preset's luma map
+// (contrast, brightness) plus a 4x4 Bayer offset, the
 // block's Y, U, V looked up in a 33x33x33 table of nearest match colours,
 // painted with the paint colour at that index; then the tag, top right.
 import { cropFor, tagCells, tagColours, yuvToRgb } from "./firmware.js";
@@ -50,7 +51,8 @@ export function cameraFrame(m, sizes, img) {
   return ctx.getImageData(0, 0, size[0], size[1]);
 }
 
-// frame: ImageData at camera size; returns a new ImageData.
+// frame: ImageData at camera size; preset: { tag, paint, ymap } (ymap:
+// firmware.js lumaMap, the identity if left out); returns a new ImageData.
 export function render(m, frame, preset, lut) {
   const { width: w, height: h, data } = frame;
   const bw = w >> 1;
@@ -68,6 +70,7 @@ export function render(m, frame, preset, lut) {
         vs += 128 + 0.5 * r - 0.418688 * g - 0.081312 * b;
       }
       let y = Math.round(ys) >> 2;
+      if (preset.ymap) y = preset.ymap[y];
       y = Math.max(0, Math.min(255, y + (BAYER[(by & 3) * 4 + (bx & 3)] - 8) * 4));
       const u = Math.max(0, Math.min(255, Math.round(us / 4)));
       const v = Math.max(0, Math.min(255, Math.round(vs / 4)));

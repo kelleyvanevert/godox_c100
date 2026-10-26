@@ -2,11 +2,15 @@
 // writing a config into it, byte for byte what tools/build.sh would make from
 // the same config (tools/editor_check.sh checks that). No DOM: runs in Node too.
 //
-// A config is { presets: [{ tag, match, paint, lcd }], rnd, sounds, tags, sizes }:
+// A config is { presets: [{ tag, match, paint, contrast, brightness, lcd }], rnd, normal, sounds, tags, sizes }:
 //   match, paint  [[Y, U, V], ...], index for index: blocks snap to a match
 //                 colour and get painted with the paint colour at its index
+//   contrast      percent added around mid-grey before matching (optional, 0)
+//   brightness    luma levels added before matching (optional, 0)
 //   lcd           the lit segments ("abcdefg") of each of the display's 3 cells
 //   rnd           the center button also offers a random preset per photo
+//   normal        and then the normal mode: no effect, photos and video as the
+//                 factory makes them, at its sizes (optional, false)
 //   sounds        play the shutter and power-on sounds (the speaker is never
 //                 switched on otherwise)
 //   tags          draw the preset's tag top right on photos and videos (the
@@ -90,6 +94,20 @@ function tagBytes(m, tag, paint) {
   return [...packed, 3 * dark, 3 * light];
 }
 
+// ---- contrast and brightness (palettes.py fx_bytes, luma_map) ----
+
+const contrastFix = (p) => Math.floor(((100 + (p.contrast ?? 0)) * 128) / 100);
+
+// What the camera does to a block's luma before the Bayer offset and the
+// table (lut_fill's luma map): contrast around mid-grey, brightness, clamped.
+export function lumaMap(p) {
+  const fix = contrastFix(p);
+  const b = p.brightness ?? 0;
+  return Uint8Array.from({ length: 256 }, (_, y) => Math.max(0, Math.min(255, (((y - 128) * fix) >> 7) + 128 + b)));
+}
+
+const fxBytes = (p) => [0, contrastFix(p), (p.brightness ?? 0) & 0xff, 0];
+
 // ---- the see-through display (palettes.py lcd_nibbles) ----
 
 export function lcdNibbles(m, segments) {
@@ -145,17 +163,22 @@ function cmpImmediate(insn, v) {
 export function configErrors(m, cfg) {
   const errors = [];
   const n = cfg.presets.length;
-  if (n < 1) errors.push("Turn on at least one palette.");
-  if (n > m.maxPresets) errors.push(`At most ${m.maxPresets} palettes fit; ${n} are on.`);
+  if (n < 1) errors.push("Turn on at least one look.");
+  if (n > m.maxPresets) errors.push(`At most ${m.maxPresets} looks fit; ${n} are on.`);
   const seen = new Set();
   for (const p of cfg.presets) {
     const name = p.tag || "(no tag)";
+    for (const k of ["contrast", "brightness"]) {
+      const [lo, hi] = m.fx[k];
+      const v = p[k] ?? 0;
+      if (!Number.isInteger(v) || v < lo || v > hi) errors.push(`${name}: ${k} from ${lo} to ${hi}.`);
+    }
     // without tags on the photos, they needn't be valid
     if (cfg.tags !== false) {
-      if (!p.tag) errors.push("Every palette needs a tag.");
+      if (!p.tag) errors.push("Every look needs a tag.");
       else if ([...p.tag].some((ch) => !m.font[ch])) errors.push(`${name}: the tag font has no "${[...p.tag].find((ch) => !m.font[ch])}".`);
       else if (p.tag.length > m.tag.letters || tagWidth(m, p.tag) > m.tag.cols) errors.push(`${name}: the tag is too wide.`);
-      if (seen.has(p.tag)) errors.push(`Two palettes are tagged ${name}.`);
+      if (seen.has(p.tag)) errors.push(`Two looks are tagged ${name}.`);
       seen.add(p.tag);
     }
     if (p.match.length < 1 || p.match.length > m.maxColours) errors.push(`${name}: 1 to ${m.maxColours} colours.`);
@@ -260,6 +283,7 @@ export function buildFirmware(template, m, cfg, sounds) {
   cfg.presets.forEach((p, i) => {
     fw[at(pd.PMATCH) + i] = i;
     if (cfg.tags !== false) fw.set(tagBytes(m, p.tag, p.paint), at(pd.TAGS) + i * m.tag.bytes);
+    fw.set(fxBytes(p), at(pd.FX) + i * m.fx.bytes);
   });
   o = at(pd.DISPLAY);
   const dv = new DataView(fw.buffer);
@@ -268,10 +292,9 @@ export function buildFirmware(template, m, cfg, sounds) {
     for (const c of p.paint) fw.set(c, (o += 3) - 3);
   });
 
-  fw.fill(0, at(m.lcdTags), at(m.lcdTags) + (m.maxPresets + 1) * m.ssCount);
-  [...cfg.presets.map((p) => p.lcd), m.rndLcd].forEach((segs, i) =>
-    fw.set(lcdNibbles(m, segs), at(m.lcdTags) + i * m.ssCount),
-  );
+  // the presets' codes, padded to maxPresets, then rnd's and nor's (fixed)
+  fw.fill(0, at(m.lcdTags), at(m.lcdTags) + m.maxPresets * m.ssCount);
+  cfg.presets.forEach((p, i) => fw.set(lcdNibbles(m, p.lcd), at(m.lcdTags) + i * m.ssCount));
   const sizes = { ...m.sizes, ...cfg.sizes };
   Object.keys(m.sizes).forEach((aspect, i) => {
     const [w, h] = sizes[aspect];
@@ -281,7 +304,10 @@ export function buildFirmware(template, m, cfg, sounds) {
   dv.setUint32(at(m.maxWCmp), cmpImmediate(dv.getUint32(at(m.maxWCmp), true), maxW), true);
 
   for (const a of m.npal) fw[at(a)] = n;
+  for (const a of m.npal1) fw[at(a)] = n + 1;
+  for (const a of m.modeMax) fw[at(a)] = n + (cfg.normal ? 1 : 0);
   fw[at(m.lastCenter)] = n - 1 + (cfg.rnd ? 1 : 0);
+  fw[at(m.afterLast)] = cfg.normal ? n + 1 : 0;
 
   for (const [addr, on, off] of m.speaker)
     fw.set(Uint8Array.from((cfg.sounds ? on : off).match(/../g), (h) => parseInt(h, 16)), at(addr));

@@ -591,6 +591,17 @@ dialog button {
   margin-top: 0;
 }
 
+/* the normal mode, under rnd: a bit apart, its text wrapping beside the tag */
+.ed-nor {
+  margin-top: 12px;
+  align-items: flex-start;
+}
+
+.ed-nor input,
+.ed-nor .cam-tag {
+  margin-top: 3px;
+}
+
 /* the preview and edit area */
 
 .ed-work {
@@ -783,6 +794,28 @@ dialog button {
 .ed-problem:empty {
   display: none;
 }
+
+/* contrast and brightness */
+.ed-fx input[type="range"] {
+  flex: 1;
+  min-width: 0;
+  accent-color: var(--ink);
+  margin: 0;
+}
+
+.ed-fx output {
+  font: 13px var(--mono);
+  width: 4.5em;
+}
+
+.editor .ed-fx-reset {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+}
+
 
 .ed-lcd {
   display: inline-flex;

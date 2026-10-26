@@ -1,10 +1,12 @@
 # Godox C100 firmware hacking
 
-_Last updated 2026-10-23_
+_Last updated 2026-10-26_
 
-**Working on the camera (`v021`):** pixel-art photos and videos at ~274k
-pixels for every aspect ratio, three presets (EP6, 6FP, BW) plus rnd chosen
-with the center button and remembered across power-off, the preset's tag on
+**Working on the camera (`v023`):** pixel-art photos and videos at ~274k
+pixels for every aspect ratio, three presets (EP6, 6FP, BW) plus rnd and the
+normal mode (no effect, the factory's sizes) chosen
+with the center button and remembered across power-off, contrast and
+brightness per preset, the preset's tag on
 photos and video and its code on the see-through display, and a silent
 camera. The preset data has fixed slots, so the
 [site's editor](#the-sites-firmware-editor) builds custom firmware (1–8
@@ -38,8 +40,10 @@ small resolution, a limited colour palette, and dithering.
 | Preset data in fixed slots (8 presets × 32 colours), preset count and rnd patchable | on the camera, working (`v021`) |
 | [Site editor](#the-sites-firmware-editor) builds: own presets, S-curve, films, tags, display codes, rnd, sounds | on the camera, working (2026-10-18: photos, video, sounds, palettes) |
 | Editor: no tag on photos and video (empty tag records) | built, `editor_check.sh` (2026-10-23) |
-| Editor: own photo/video size per aspect setting (`v022` template: a size table) | built, `editor_check.sh`; not yet on the camera |
+| Editor: own photo/video size per aspect setting (`v022` template: a size table) | built, `editor_check.sh`; on the camera with the default sizes (`v023`) |
 | Table kept when the preset doesn't change (no ~60 ms fill before the capture) | built (`v015`), emulator |
+| [Normal mode](#the-normal-mode-no-effect) (`nor`, after rnd): no effect, the factory's sizes (`v023`) | on the camera, working (`v023`, 2026-10-26) |
+| [Contrast and brightness per preset](#contrast-and-brightness-per-preset) (a luma map, also 5 instructions per block less) | on the camera, working (`v023`, 2026-10-26) |
 
 Open: [repeated frames](#timing-and-headroom) in some dithered videos.
 
@@ -94,7 +98,7 @@ In `tools/`:
   | `VIDFX` | 1 | preset dithering + tag on video; 0 = plain small video |
   | `VIDTIMING` | 0 | 1 = draw each video strip's hook time (test builds only) |
   | `LCDTAG` | 1 | 1 = the center button [cycles the preset mode](#preset-mode-center-button-and-display) and the display shows it; 0 = stock blank display, no button, always the first preset |
-  | `CONTRAST`, `BRIGHT` | 100, 0 | look knobs, see [below](#look-knobs-contrast--brightness) |
+  | `PRESETS_JSON` | | the presets from a config file (the editor's shape, `palettes.py config()`), including each one's [contrast and brightness](#contrast-and-brightness-per-preset), rnd and the normal mode; else the built-in ones |
 
   e.g. `SILENT=1 sh tools/build.sh`. The UI/focus beep (`BEEP.wav`) is
   silenced in every build.
@@ -196,7 +200,12 @@ which shifts every address after them).
   `ldr =` literals, so the editor can set each size; same sizes, so it should
   behave as v021 does. The current build, the site's default download and the
   editor's template (`site/editor/`; v021 is now only in `build_backups/`).
-  Not yet on the camera.
+  The site's default download until v023.
+- `v023_editor_template.bin` — v022 plus the [normal mode](#the-normal-mode-no-effect)
+  (after rnd) and [contrast and brightness per
+  preset](#contrast-and-brightness-per-preset). The current build and the
+  editor's template, and the site's default download. Works on the camera
+  (2026-10-26).
 
 ## Code caves and hooks
 
@@ -403,21 +412,24 @@ the capture starts):
    counts milliseconds since boot, so its low bits at the shutter press are
    effectively random. If it equals the previous photo's palette, the next one
    is used, so the same palette never comes twice in a row.
-2. **Table buffer**, allocated once with `pvPortMalloc(35937, 64)` (thunk at
-   `0x5374c` → `FUN_0005ca54`) and kept. If the allocation fails, the photo is
+2. **Table buffer**, allocated once with `pvPortMalloc(256 + 35937, 64)` (thunk at
+   `0x5374c` → `FUN_0005ca54`) and kept; the first 256 bytes are the preset's
+   [luma map](#contrast-and-brightness-per-preset). If the allocation fails, the photo is
    left unprocessed and the next photo tries again.
 3. **Fill:** for every bin centre (Y, U, V in 0, 8, …, 256) find the nearest
    palette colour (`2·|dY| + |dU| + |dV|`, first one wins on a tie, as in the
    simulator) and store its byte offset (3 × index). The last bin's centre is
    256, not 255, which adds the same amount to every distance, so the winner
    is the same.
-4. Set `CUR_PAL` (the palette's colours) last; while it is 0 the hook leaves
-   strips alone. `lut_build` also resets the strip counter `STRIP_N`.
+4. Fill the luma map from the preset's contrast and brightness.
+5. Set `CUR_PAL` (the palette's colours) last; while it is 0 the hook leaves
+   strips alone (and the [normal mode](#the-normal-mode-no-effect) only sets
+   it to 0). `lut_build` also resets the strip counter `STRIP_N`.
 
 **Per strip — `hook`** (interrupt), per 2×2 block:
 
 1. average the block's 4 luma;
-2. apply `CONTRAST` / `BRIGHT` (assemble-time constants);
+2. take it through the preset's luma map (contrast, brightness; one load);
 3. add a **4×4 Bayer** ordered-dither offset (±32), clamp to 0–255;
 4. read the block's U, V;
 5. one table read at `((yq·33 + uq)·33 + vq)`, `q = (x + 4) >> 3`
@@ -425,7 +437,8 @@ the capture starts):
 6. paint the whole block that palette colour (Y to all four luma, U, V to the
    pair).
 
-That's **66 instructions per block**, against 147 for the v1 6-colour search
+That's **61 instructions per block** (66 until `v023`, which computed
+contrast and brightness per block), against 147 for the v1 6-colour search
 (both counted in the emulator, v1 on the v008 backup). Per-block is the natural
 unit in 4:2:0 (one chroma pair per block).
 
@@ -754,12 +767,66 @@ the [preset data cave](#code-caves-and-hooks) (`0xbbc00`–`0xbbd9c` in
 repeated preset and rnd: the right preset each time, the table kept exactly
 when the preset repeats (the fill's inner loop runs zero times), and every
 block, tag included, equals the sim (0.00% differing). `emu_video.py` (rnd
-mode): two recordings, a new preset for the second, 0.00% differing.
+mode): two recordings, a new preset for the second, 0.00% differing. Since
+`v023` both run any `PRESETS_JSON`: per-preset contrast and brightness (0.00%
+differing), and in the normal mode the strips coming back untouched.
+
+### The normal mode (no effect)
+
+The **normal mode** (`"normal": true` in the config; the editor's checkbox
+under rnd) is the camera as it is: photos and video as it makes them without
+this firmware, at the factory's sizes (1920×1080, 1616×1080, 1440×1080,
+1024×1024 for the four aspects; hardware JPEG and H.264 as they come). It is
+mode byte `NPAL + 1`, after rnd in the center button's cycle (EP6, 6FP, BW,
+rnd, nor), and the display shows `nor`. It comes from Donald Sayers' fork
+(github.com/DonaldLSayers/godox_c100), which has it after its Game Boy mode.
+
+- **No effect:** `lut_fill` only sets `CUR_PAL` to 0, so the photo and video
+  hooks leave every strip alone (no table fill, no tag).
+- **The cycle:** `center_hook` steps to `NPAL + 1` after the last preset (or
+  rnd) and from there to the first preset. Its immediates (`npal1_*`: `NPAL +
+  1`; `max_*`: the last mode, `NPAL + NORMAL_MODE`, so with the mode off a
+  saved `NPAL + 1` counts as the first preset; `after_last`) are what the
+  editor patches. `PRESET_FX` keeps a flags byte per preset (0 for now), for a
+  kind of preset to come, such as a Game Boy look.
+- **Sizes:** the firmware builds the capture size only at startup and after an
+  aspect change, so the normal mode gets aspect slots of its own, as the fork
+  did for its Game Boy and normal modes: slots 6, 7, 8, 10 and 13 (`NIDX`,
+  `lcd_cave.s`) of the photo (`0xf3d0`) and video (`0xf0a0`) size tables
+  point at the factory handlers of aspects 0–4 (`build.sh NORMAL_PATCHES`;
+  nothing else uses those slots; the ones we patch for our sizes are 0–4, 9,
+  11 and 12). When the center button steps into the normal mode,
+  `center_hook` remembers the user's aspect (settings byte `0xf2`,
+  saved at power-off like `0xf1`), selects its slot in the UI's aspect
+  (`0x1217bd`) and posts the stock resize message `0x7000`, as the arrow keys
+  do; stepping out of it restores the aspect the same way. The resize handler
+  (`FUN_000362b8`) only rebuilds when the aspect differs from the stored one
+  (`CFG + 0x38`), which is why the mode can't just choose the size: the slot
+  makes the difference. It is a camera restart, about a second. Between the
+  other modes nothing changes.
+- **Arrow keys:** every aspect change goes through `FUN_000213e0(delta)`;
+  `aspect_jump.s` sends it to `aspect_hook`, which in the normal mode steps
+  the remembered aspect (wrapping as the stock function does) and selects its
+  slot, and otherwise re-runs the replaced `ldr r2, =0x1217bd` and continues
+  in the stock function.
+- **Aspect bracket:** the display's bracket routine `FUN_0004a7f4(state,
+  aspect)` lights brackets for aspects 1–4 only; `bracket_jump.s` sends its
+  `sub r1, r1, #1` (`0x4a818`) to `bracket_hook`, which maps a slot back to its
+  aspect first (r0 is set again and r2 is 0 at that point, so both are free).
+
+**Verified in the emulator** (`emu_seg.py`, with rnd and the normal mode each
+on and off): the cycle; the center button posts `0x7000` exactly when it steps
+into or out of the normal mode, the aspect becomes the slot and back, the
+user's aspect is remembered; the arrow keys are stock in a palette and rnd and
+step the slots in the normal mode; both size tables' slots equal the factory
+entries of aspects 0–4; the bracket for every slot is the stock one for its
+aspect. Works on the camera (`v023`, 2026-10-26).
 
 ## The site's firmware editor
 
 `site/editor/` (on godox.klve.nl) lets anyone fill 8 preset slots (palette,
-S-curve, film, tag, display code) and tick 1–8 of them, turn rnd on or off,
+S-curve, film, contrast, brightness, tag, display code) and tick 1–8 of them,
+turn rnd and the [normal mode](#the-normal-mode-no-effect) on or off,
 leave the tags off, set the photo/video size of each aspect setting, and turn sounds
 on or off (stock, Mario or their own), previews them on photos, and builds
 the firmware in the browser.
@@ -780,12 +847,12 @@ round half to even), and gives exactly `film_colours.py` for EP6 and 6FP.
 `film_luts/` to `site/editor/films/`, ~200 KB each, loaded when chosen).
 
 **Template, not assembler.** Everything the editor changes is data or an
-immediate, so it patches one template build (`site/editor/v022_editor_template.bin`,
+immediate, so it patches one template build (`site/editor/v023_editor_template.bin`,
 checked against its sha256) instead of assembling:
 
 - The preset data cave has a fixed layout (`palettes.py PD`): each table is
   padded to room for `MAX_PRESETS` = 8 of `NMAX` = 32 colours (0xbbc00–
-  0xbc2f8), and `LCD_TAGS` to 9 entries. The caves already walk the match
+  0xbc318 since `v023`), and `LCD_TAGS` to 10 entries (8 presets, rnd, nor). The caves already walk the match
   palettes by their counts and the paint colours by pointer, so only the
   labels had to stop moving. Since then every build uses this layout (one
   match palette per preset, no sharing).
@@ -802,6 +869,11 @@ checked against its sha256) instead of assembling:
   factory's CLICK slot back, byte for byte (`sounds/stock_click.wav`).
 - Tags off: the tag records stay zero (cell 0 = the photo shows through), so
   `draw_tag` draws nothing; no code changes.
+- Contrast and brightness: each preset's `PRESET_FX` record (flags 0,
+  `contrast_fix`, brightness as a signed byte).
+- The normal mode: the `npal1_*`, `max_*` and `after_last` immediates (see
+  [the normal mode](#the-normal-mode-no-effect)). The display codes of rnd and
+  `nor` sit at fixed places after the 8 presets' in `LCD_TAGS`.
 - Sizes: the 16 words of `SIZES` (output and crop per aspect, the crop from
   `cropFor`) and the immediate of `cmp_max_w` (the widest output), encoded as
   llvm-mc does: the smallest 8-bit value with an even rotation (704 = 11 ror
@@ -1028,17 +1100,28 @@ the 16 KB power-on slot holds only 0.37 s.
 
 ## Look knobs (contrast / brightness)
 
-`build.sh` applies an optional per-block brightness pre-map before palette
-matching (hue/colour mapping is untouched), to photos and videos alike, as
-assemble-time constants so there is no runtime division:
+### Contrast and brightness per preset
 
-- `CONTRAST` — percent, 100 = neutral. Higher (≈115–140) is more dramatic
-  (pushes midtones to the palette's dark/bright ends, good for flat/dim
-  scenes); lower (≈70–90) is softer. Useful range ~70–160.
-- `BRIGHT` — luma offset, 0 = neutral; positive lifts, negative darkens
-  (≈ −60…60).
+Each preset has a contrast and a brightness (`palettes.py`, the editor's
+sliders; both −50…50, 0 = as shot), applied to each block's luma before the
+Bayer offset and the table, to photos and videos alike (colour matching is
+otherwise untouched):
 
-e.g. `CONTRAST=130 BRIGHT=10 SILENT=1 sh tools/build.sh`.
+- `contrast` — percent added around mid-grey. Higher (≈15–40) is more
+  dramatic: it pushes midtones to the palette's dark and bright ends, good
+  for flat or dim scenes; lower is softer.
+- `brightness` — luma levels added; positive lifts, negative darkens.
+
+`Y' = (Y − 128) · fix / 128 + 128 + brightness`, `fix = (100 + contrast) ·
+128 / 100` (both rounded down), clamped to 0–255. `lut_fill` computes it once
+per preset change into a 256-byte **luma map** in front of the table, so the
+hooks do one load per block instead of the multiply and adds of the old
+assemble-time `CONTRAST`/`BRIGHT` knobs (gone since `v023`): 5 instructions per
+block fewer, ~7% of the hook. The clamp now comes before the Bayer offset, so
+a block pushed past white stays plain white instead of dithering back down;
+with contrast and brightness at 0 nothing changes. `sim_palette.py`,
+`sim.js` and the emulator checks do the same. The normal mode has neither (no
+effect at all).
 
 ## UI graphics (GPZP, logos, and the OSD overlay)
 

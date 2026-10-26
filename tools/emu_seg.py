@@ -232,9 +232,17 @@ if __name__ == '__main__':
         # ISO/F/SS on: `*0x372bc + 1` in FUN_000362b8 (the arrows are -1/+1 there).
         CYCLE_MSG = struct.unpack('<I', open(FW, 'rb').read()[APP + 0x372bc:APP + 0x372c0])[0] + 1
         STOCK_POSTS = ['0x7018', hex(CYCLE_MSG)]
-        codes = [t for t, _, _ in palettes.presets()] + [palettes.RND]
+        cfg = palettes.config()                        # as build.sh built them (PRESETS_JSON)
+        pre = cfg['presets']
+        NOR = len(pre) + 1                             # the normal mode's byte
+        # the center button's cycle: the presets, rnd, the normal mode (those two if on)
+        modes = list(range(len(pre))) + [len(pre)] * cfg['rnd'] + [NOR] * cfg.get('normal', False)
+        code = lambda mode: pre[mode]['tag'] if mode < len(pre) else palettes.RND if mode == len(pre) else palettes.NORMAL
+        segments = lambda mode: pre[mode]['lcd'] if mode < len(pre) else palettes.lcd_segments(code(mode))
+        lcd_text = lambda mode: ''.join(glyph[frozenset(s)] for s in segments(mode))
         SS = set(range(palettes.SS_FIRST, palettes.SS_FIRST + palettes.SS_COUNT))
         glyph = {frozenset(segs): name for name, segs in palettes.SEG7.items()}
+        glyph[frozenset()] = ' '
 
         def shown(segs):
             """The glyphs on the three SS cells, e.g. 'EP6' or '8W<W>'."""
@@ -288,35 +296,86 @@ if __name__ == '__main__':
 
         segs, outside = tick_refresh(0)
         check('fresh settings: mode 0', uc.mem_read(MODE, 1)[0], 0)
-        check('photo mode shows it', shown(segs), palettes.lcd_text(codes[0]))
+        check('photo mode shows it', shown(segs), lcd_text(0))
         check('photo mode, everything outside the SS cells as stock', outside, set())
-        for n in range(1, len(codes) + 1):             # cycle through every mode and back
+        ASPECT, ASPECT_SAVE = 0x1217bd, CFG + 0xf2      # the UI's aspect, and the user's one in the normal mode
+        NIDX = [6, 7, 8, 10, 13]                        # the normal mode's slot for each aspect 0-4
+        cls = lambda mode: mode == NOR
+        uc.mem_write(ASPECT, bytes([2]))                # 3:2 selected
+        for n in range(1, len(modes) + 1):             # cycle through every mode and back
             state = n % 2                              # alternate photo and video mode
-            check(f'press {n} ({"video" if state else "photo"} mode) posts the cycle message', press(state),
-                  STOCK_POSTS)
-            m = n % len(codes)
+            old, new = modes[(n - 1) % len(modes)], modes[n % len(modes)]
+            change = cls(old) != cls(new)
+            # only into or out of the normal mode does the center button also post the stock aspect change
+            check(f'press {n} ({"video" if state else "photo"} mode) posts the cycle message'
+                  f'{" and the resize" if change else ""}', press(state),
+                  STOCK_POSTS[:1] + (['0x7000'] if change else []) + STOCK_POSTS[1:])
+            want = NIDX[2] if cls(new) else 2
+            check(f'press {n}: the aspect is {want} ({"the factory sizes" if cls(new) else "regular"})',
+                  uc.mem_read(ASPECT, 1)[0], want)
+            if cls(new):
+                check(f'press {n}: the user\'s aspect is remembered', uc.mem_read(ASPECT_SAVE, 1)[0], 2)
+            m = new
             check(f'press {n} steps the mode', uc.mem_read(MODE, 1)[0], m)
             check(f'press {n} marks the settings to be saved', uc.mem_read(DIRTY, 1)[0], 1)
             uc.mem_write(DIRTY, b'\0')
             segs, outside = tick_refresh(state)
-            check(f'press {n} display shows {codes[m]}', shown(segs), palettes.lcd_text(codes[m]))
+            check(f'press {n} display shows {code(m)}', shown(segs), lcd_text(m))
             check(f'press {n} outside the SS cells as stock', outside, set())
         uc.mem_write(DIRTY, b'\0')
         uc.mem_write(MODE, b'\x37')                     # settings from before: not a mode
-        check('mode byte 0x37 shows as the first', shown(tick_refresh(0)[0]), palettes.lcd_text(codes[0]))
+        check('mode byte 0x37 shows as the first', shown(tick_refresh(0)[0]), lcd_text(0))
         check('mode byte 0x37: a press goes to the second', (press(0), uc.mem_read(MODE, 1)[0]), (STOCK_POSTS, 1))
         for n in range(2):
             call(uc, LUT_FILL, count=400_000_000)
             check(f'fixed mode, capture {n + 1} uses it', word32(PAL_IDX), 1)
+        if NOR in modes:
+            uc.mem_write(MODE, bytes([NOR]))
+            call(uc, LUT_FILL, count=400_000_000)
+            check('the normal mode: a capture has the hooks off', word32(VARS + 4), 0)
+            uc.mem_write(MODE, b'\1')
         uc.mem_write(DIRTY, b'\0')
         check('recording: press posts as stock', press(1, rec=2), STOCK_POSTS)
         check('recording: mode unchanged, not marked', (uc.mem_read(MODE, 1)[0], uc.mem_read(DIRTY, 1)[0]), (1, 0))
         segs, outside = tick_refresh(1, rec=2)
-        check('recording: display shows the mode', shown(segs), palettes.lcd_text(codes[1]))
+        check('recording: display shows the mode', shown(segs), lcd_text(1))
         check('readout state: press posts as stock', press(2), STOCK_POSTS)
         check('readout state: mode unchanged', uc.mem_read(MODE, 1)[0], 1)
         segs = run(uc, lcd, 2)
         check('readout state exactly as stock (ISO 400, F5.6, SS 1/25): differing',
               fmt(segs ^ run(stock_uc, stock_lcd, 2)), '-')
+        # ---- the arrow keys' aspect change (FUN_000213e0), and in the normal mode ----
+        def arrow(delta):
+            call(uc, 0x213e0, delta & 0xffffffff)
+            return uc.mem_read(ASPECT, 1)[0]
+        uc.mem_write(MODE, b'\0')
+        uc.mem_write(ASPECT, bytes([2]))
+        check('arrow keys in a palette: stock (right, left, right x3)', [arrow(1), arrow(-1), arrow(1), arrow(1), arrow(1)], [3, 2, 3, 4, 0])
+        uc.mem_write(MODE, bytes([len(pre)]))
+        check('arrow keys in rnd: stock (left, left)', [arrow(-1), arrow(-1)], [4, 3])
+        if NOR in modes:
+            uc.mem_write(MODE, bytes([NOR]))
+            uc.mem_write(ASPECT_SAVE, bytes([2]))
+            uc.mem_write(ASPECT, bytes([NIDX[2]]))
+            seen = [arrow(1), arrow(1), arrow(1), arrow(-1)]          # aspects 3, 4, wrap to 0, back to 4
+            check('arrow keys in the normal mode: the factory-size slots (right x3, left)', seen, [NIDX[3], NIDX[4], NIDX[0], NIDX[4]])
+            check('... and the remembered aspect follows', uc.mem_read(ASPECT_SAVE, 1)[0], 4)
+        orig = open('c100_v1.1.6_20260929/GP_CARDVR_UPGRADE.BIN', 'rb').read()
+        fw = open(FW, 'rb').read()
+        entry = lambda d, base, i: d[APP + base + 4 * i:APP + base + 4 * i + 4]
+        for table, base in (('photo', 0xf3d0), ('video', 0xf0a0)):
+            check(f'{table} size table: the normal slots are the factory handlers of aspects 0-4',
+                  [entry(fw, base, i) for i in NIDX] == [entry(orig, base, i) for i in range(5)], True)
+        BRACKET = 0x4a7f4                               # FUN_0004a7f4(state, aspect): the aspect bracket
+        shown_b = lambda l: (l.ram[6] & 8, l.ram[0x15])
+        for a in range(5):
+            call(stock_uc, BRACKET, 0, a)
+            call(uc, BRACKET, 0, NIDX[a])
+            check(f'bracket for the normal slot {NIDX[a]} = the stock one for aspect {a}', shown_b(lcd), shown_b(stock_lcd))
+            call(uc, BRACKET, 0, a)
+            check(f'bracket for aspect {a} as stock', shown_b(lcd), shown_b(stock_lcd))
+        call(stock_uc, BRACKET, 0, 9)
+        call(uc, BRACKET, 0, 9)
+        check('bracket for an unknown slot: as stock', shown_b(lcd), shown_b(stock_lcd))
         print('mode test', 'PASSED' if ok else 'FAILED')
         sys.exit(0 if ok else 1)

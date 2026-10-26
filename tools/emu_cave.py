@@ -7,14 +7,17 @@ Loads build/GP_CARDVR_UPGRADE.BIN, stubs the firmware calls the cave makes
      out-of-range value, which must act as the first preset), then runs
      idx_stub (the per-photo entry), which picks the preset and fills the
      lookup table, or keeps it when the preset didn't change (checked by
-     counting the fill's inner loop);
+     counting the fill's inner loop); the normal mode (if on) must turn the
+     hook off;
   2. packs 640x64 slices of a photo into strips in the camera's YUV 4:2:0
      layout (see docs/c100-firmware.md) and runs the strip hook
      on two of them;
   3. unpacks each strip and checks that every 2x2 block is exactly the colour
      the sim expects: sim_palette.py's pick in the preset's match palette (same
-     WY and table), painted with the preset's film colour; including the
-     preset tag on the photo's first strip and not on the second.
+     WY, table and the preset's contrast and brightness), painted with the
+     preset's film colour; including the preset tag on the photo's first strip
+     and not on the second. In the normal mode the strips must come back
+     untouched.
 
 It does this at every photo output width (palettes.py SIZES; all modes
 at the first, one pass over the presets at the others), and reports the
@@ -27,7 +30,7 @@ import os, struct, subprocess, sys
 import numpy as np
 from unicorn import Uc, UC_ARCH_ARM, UC_MODE_ARM, UC_HOOK_BLOCK, UC_HOOK_CODE
 from unicorn.arm_const import UC_ARM_REG_R0, UC_ARM_REG_R1, UC_ARM_REG_LR, UC_ARM_REG_PC, UC_ARM_REG_SP
-from palettes import LUT, SIZES, WY, config_presets
+from palettes import LUT, SIZES, WY, config
 from sim_palette import add_tag, match, prepare
 
 FW = 'build/GP_CARDVR_UPGRADE.BIN'
@@ -111,33 +114,41 @@ def main():
     global W
     photo = sys.argv[1]
     sym = symbols()
-    pre = config_presets()                            # as build.sh built them (PRESETS_JSON)
+    cfg = config()                                    # as build.sh built them (PRESETS_JSON)
+    pre = cfg['presets']
     rnd = len(pre)                                    # MODE value for random
+    nor = [rnd + 1] if cfg.get('normal') else []      # and for the normal mode
+    tags = cfg.get('tags', True)
     uc, calls = machine()
     fill, steps = [0], [0]
     uc.hook_add(UC_HOOK_CODE, lambda *_: fill.__setitem__(0, fill[0] + 1), begin=sym['sl'], end=sym['sl'])
     uc.hook_add(UC_HOOK_BLOCK, lambda uc_, addr, size, _: steps.__setitem__(0, steps[0] + size // 4))
     kinds = {CACHE_INV: 'inv', CACHE_CLEAN: 'clean', MALLOC: 'malloc'}
-    worst, last, ok, n = 0, None, True, 0
+    worst, table, ok, n = 0, None, True, 0           # table: the preset the table holds, while on
     widths = sorted({o[0] for _, o in SIZES.values()}, reverse=True)
-    all_modes = list(range(rnd)) + [0, 0, 2, 2] + [rnd] * 4 + [1, 0x37]   # 0x37: not a mode = the first
+    all_modes = list(range(rnd)) + [0, 0, 2, 2] + [rnd] * 6 + nor + [1, 0x37] + nor + [1]   # 0x37: not a mode = the first
     for W in widths:
       src = prepare(photo, W)
       per_strip = []
       print(f'-- photo width {W}')
-      for mode in (all_modes if W == widths[0] else list(range(rnd))):
+      for mode in (all_modes if W == widths[0] else list(range(rnd)) + nor):
         n += 1
         uc.mem_write(TICK, struct.pack('<I', 100 + 37 * n))
         uc.mem_write(CFG_MODE, bytes([mode]))
         calls.clear()
         fill[0] = 0
         assert run(uc, sym['idx_stub']) == RESUME187
-        idx = struct.unpack('<I', uc.mem_read(sym['VARS'] + 8, 4))[0]
-        tag, P, D = pre[idx]
-        want = (idx == mode) if mode < rnd else (idx != last and idx < rnd) if mode == rnd else idx == 0
+        cur_pal = struct.unpack('<I', uc.mem_read(sym['VARS'] + 4, 4))[0]
+        normal = mode in nor
+        idx = struct.unpack('<I', uc.mem_read(sym['VARS'] + 8, 4))[0] if mode == rnd else mode if mode < rnd else 0
+        p = {'tag': 'nor', 'match': [], 'paint': []} if normal else pre[idx]
+        tag, P, D = p['tag'], [tuple(c) for c in p['match']], [tuple(c) for c in p['paint']]
+        want = idx != table if mode == rnd else True
+        want &= (cur_pal == 0) == normal
         refilled = fill[0] > 0
-        want_fill = idx != last
+        want_fill = not normal and idx != table
         ok &= want and refilled == want_fill
+        table = None if normal else idx
         diffs = []
         for strip, top in enumerate((0, 200)):       # the photo's 1st and 2nd strip
             crop = src.crop((0, top, W, top + ROWS))
@@ -147,15 +158,19 @@ def main():
             steps[0] = 0
             assert run(uc, sym['hook'], r0=0x300000, r1=STRIP_A) == RESUME
             per_strip.append(steps[0])
-            Y, UV = unpack(bytes(uc.mem_read(STRIP_A, W * 3 // 2 * ROWS)))
+            out = bytes(uc.mem_read(STRIP_A, W * 3 // 2 * ROWS))
+            if normal:                               # no effect: the strip as it was
+                diffs.append(100.0 * (out != pack(np.asarray(crop.convert('YCbCr')))))
+                continue
+            Y, UV = unpack(out)
             # every 2x2 block must be exactly one palette colour, the one the sim picks
-            ref = match(crop, P, wy=WY, lut=LUT)
-            if strip == 0:
+            ref = match(crop, P, wy=WY, lut=LUT, contrast=100 + p.get('contrast', 0), bright=p.get('brightness', 0))
+            if strip == 0 and tags:
                 add_tag(ref, tag, D)
             diffs.append(differing(Y, UV, np.array(D)[ref]).mean() * 100)
         worst = max(worst, *diffs)
-        last = idx
-        print(f'mode {"rnd" if mode == rnd else hex(mode)}: preset {idx} {tag} ({len(P)} colours)'
+        print(f'mode {"rnd" if mode == rnd else "nor" if normal else hex(mode)}: preset {"-" if normal else idx} {tag} '
+              f'({"normal" if normal else f"{len(P)} colours"}, c{p.get("contrast", 0)} b{p.get("brightness", 0)})'
               f'{"" if want else " WRONG PRESET"}, table {"filled" if refilled else "kept"}'
               f'{"" if refilled == want_fill else " (WRONG)"}, blocks differing from sim: '
               f'strip 1 (tag) {diffs[0]:.2f}%, strip 2 {diffs[1]:.2f}%, '

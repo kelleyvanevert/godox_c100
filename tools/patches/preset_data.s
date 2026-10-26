@@ -10,6 +10,9 @@
 @   DISPLAY_PTRS    per preset: address of its paint colours (count x (Y,U,V),
 @                   index for index with the match palette); CUR_PAL, so the
 @                   photo and video hooks paint with these
+@   PRESET_FX       per preset: FX_BYTES: a flags byte (0; for kinds of
+@                   preset to come), the luma map's contrast (/128) and
+@                   brightness (signed), a spare byte; lut_fill reads these
 @   TAGS            per preset: the 3-letter tag (draw_tag)
     .syntax unified
     .arm
@@ -26,4 +29,6 @@ DISPLAY:
     DISPLAY_DATA
 DISPLAY_PTRS:
     DISPLAY_PTR_DATA
+PRESET_FX:
+    PRESET_FX_DATA
 PRESET_DATA_END:

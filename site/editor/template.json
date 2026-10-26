@@ -1,7 +1,7 @@
 {
- "file": "v022_editor_template.bin",
+ "file": "v023_editor_template.bin",
  "size": 1841152,
- "sha256": "06cf9c59368af785a19f3185248fb7c01979bb62c4c4b8ac1d0c6bcdecdf6761",
+ "sha256": "e71ed1efd77bcdfeeb59f0bdbb806f2e5686899b27fe16d6f6c74f63360014d1",
  "appOffset": 66048,
  "maxPresets": 8,
  "maxColours": 32,
@@ -11,7 +11,19 @@
   "TAGS": 769808,
   "DISPLAY": 770008,
   "DPTRS": 770776,
-  "END": 770808
+  "FX": 770808,
+  "END": 770840
+ },
+ "fx": {
+  "bytes": 4,
+  "contrast": [
+   -50,
+   50
+  ],
+  "brightness": [
+   -50,
+   50
+  ]
  },
  "tag": {
   "letters": 3,
@@ -302,9 +314,16 @@
    "111",
    "101",
    "111"
+  ],
+  "o": [
+   "000",
+   "000",
+   "111",
+   "101",
+   "111"
   ]
  },
- "lcdTags": 771272,
+ "lcdTags": 771608,
  "ssFirst": 13,
  "ssCount": 7,
  "ssCells": [
@@ -404,15 +423,32 @@
   "ceg",
   "bcdeg"
  ],
- "npal": [
-  765640,
-  765992,
-  765996,
-  766020,
-  771100,
-  771212
+ "norLcd": [
+  "ceg",
+  "cdeg",
+  "eg"
  ],
- "lastCenter": 771224,
+ "npal": [
+  765644,
+  766076,
+  766080,
+  766104,
+  771108,
+  771116
+ ],
+ "npal1": [
+  765628,
+  771236,
+  771400
+ ],
+ "modeMax": [
+  765620,
+  771100,
+  771228,
+  771392
+ ],
+ "lastCenter": 771248,
+ "afterLast": 771252,
  "speaker": [
   [
    142136,
@@ -510,7 +546,7 @@
   "maxH": 576,
   "maxPixels": 409600
  },
- "sizeTable": 766204,
+ "sizeTable": 766288,
  "maxWCmp": 767900,
  "wy": 2,
  "defaults": {
@@ -1082,6 +1118,7 @@
     ]
    }
   ],
-  "rnd": true
+  "rnd": true,
+  "normal": true
  }
 }
