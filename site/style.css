@@ -806,6 +806,24 @@ dialog button {
   display: none;
 }
 
+/* the Game Boy Camera related settings: a group with a line on the left,
+   its rows still lined up with the others */
+.ed-gb {
+  border-left: 2px solid var(--ink);
+  margin: 4px 0 12px -12px;
+  padding: 2px 0 0 10px;
+}
+
+.ed-gb .ed-row:last-child {
+  margin-bottom: 0;
+}
+
+.ed-gb-label {
+  margin: 0 0 8px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
 .ed-hint {
   flex-basis: 100%;
   padding-left: 82px;

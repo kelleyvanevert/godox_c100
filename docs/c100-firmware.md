@@ -903,7 +903,10 @@ checked against its sha256) instead of assembling:
 `site/editor/template.json` lists every offset, read from the assembled caves
 by `editor_data.py`. `firmware.js` is the patcher (no DOM, runs in Node),
 `sim.js` the preview (the camera's table and Bayer, as `sim_palette.py`),
-`editor.js` the UI (state in localStorage).
+`editor.js` the UI (state in localStorage). The page's stylesheet and
+scripts, the editor's modules and its JSON carry one `?v=` stamp, so a deploy
+never mixes cached and new files: run `sh tools/bump_site_version.sh` before
+committing site changes.
 
 **Verified (2026-10-18):** `editor_check.sh` (16 random configs: 1–8 presets
 of 1–32 colours, random tags and segments, rnd and sounds on/off, random and

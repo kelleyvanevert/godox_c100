@@ -2,10 +2,12 @@
 // display code), each on or off, rnd and the normal mode, tags on or off, photo sizes
 // and sounds; previewed on nine photos, kept in localStorage,
 // and built into a firmware in the browser (firmware.js) from the template.
-import { buildFirmware, configErrors, cropFor, encodeWav, hexToYuv, sha256, sortedRamp, sizeErrors, slotSamples, tagCells, tagColours, tagWidth, yuvToHex, yuvToRgb } from "./firmware.js";
-import { paintColours } from "./films.js";
-import { buildLut, cameraFrame, render } from "./sim.js";
+import { buildFirmware, configErrors, cropFor, encodeWav, hexToYuv, sha256, sortedRamp, sizeErrors, slotSamples, tagCells, tagColours, tagWidth, yuvToHex, yuvToRgb } from "./firmware.js?v=202610262303";
+import { paintColours } from "./films.js?v=202610262303";
+import { buildLut, cameraFrame, render } from "./sim.js?v=202610262303";
 
+// this module's ?v= (tools/bump_site_version.sh), for the JSON it fetches
+const STAMP = new URL(import.meta.url).search;
 const STORE = "c100-editor-v3";
 // a 3 x 3 grid: streets, natural, close-ups
 const PHOTOS = [
@@ -569,8 +571,8 @@ function renderPalette() {
     </div>
     ${fxRow(p, "contrast")}
     ${fxRow(p, "brightness")}
-    <div class="ed-gb">
-      <p class="note">From the Game Boy Camera, each on its own.</p>
+    <div class="ed-gb" role="group" aria-labelledby="ed-gb-label">
+      <p class="ed-gb-label" id="ed-gb-label">Game Boy Camera related</p>
       <div class="ed-row">
         <span class="label">Ramp</span>
         <label class="ed-check"><input type="checkbox" id="ed-shades" ${p.shades ? "checked" : ""} />
@@ -1358,7 +1360,7 @@ async function download() {
 
 async function main() {
   [m, library] = await Promise.all(
-    ["editor/template.json", "editor/library.json"].map((u) => fetch(u).then((r) => r.json())),
+    ["editor/template.json", "editor/library.json"].map((u) => fetch(u + STAMP).then((r) => r.json())),
   );
   state = load();
   $("#ed-max").textContent = m.maxPresets;

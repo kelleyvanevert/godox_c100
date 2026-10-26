@@ -7,7 +7,7 @@
 // same colours as tools/film_colours.py. The S-curve is BW's tone curve:
 // luma through BW_MATCH -> BW_LEVELS, piecewise linear, chroma kept; on BW's
 // greys it gives exactly BW_LEVELS.
-import { rgbToYuv, yuvToRgb } from "./firmware.js";
+import { rgbToYuv, yuvToRgb } from "./firmware.js?v=202610262303";
 
 const f32 = Math.fround;
 const cubes = {};
