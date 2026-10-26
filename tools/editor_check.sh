@@ -1,6 +1,7 @@
 #!/bin/sh
 # Check the site's firmware editor against build.sh: for random configs (1-8
-# presets of 1-32 colours, random contrast and brightness, random tags,
+# presets of 1-32 colours, random contrast and brightness, ramp, Game Boy
+# tone, pixel size and sharpening, random tags,
 # display segments, rnd and the normal mode on/off, sounds
 # on/off, tags on/off, random photo sizes, random and stock WAVs), the
 # editor's patched template must equal what build.sh assembles from the same
@@ -26,4 +27,6 @@ for dir in "$OUT"/case*; do
 done
 # leave build/ as the template build again
 uv run -q --with pillow tools/editor_data.py >/dev/null
+# and the preview's look against the exact reference (what the firmware does)
+node tools/look_check.mjs 40 | uv run -q --with numpy python tools/look_check.py | tail -1 || fail=1
 [ $fail = 0 ] && echo "editor check PASSED" || { echo "editor check FAILED"; exit 1; }

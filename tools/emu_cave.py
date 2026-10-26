@@ -31,7 +31,8 @@ import numpy as np
 from unicorn import Uc, UC_ARCH_ARM, UC_MODE_ARM, UC_HOOK_BLOCK, UC_HOOK_CODE
 from unicorn.arm_const import UC_ARM_REG_R0, UC_ARM_REG_R1, UC_ARM_REG_LR, UC_ARM_REG_PC, UC_ARM_REG_SP
 from palettes import LUT, SIZES, WY, config
-from sim_palette import add_tag, match, prepare
+from sim_look import look_blocks
+from sim_palette import add_tag, prepare
 
 FW = 'build/GP_CARDVR_UPGRADE.BIN'
 APP = 0x10200                       # file offset of RAM address 0
@@ -92,6 +93,12 @@ def pack(ycc):
     return bytes(out)
 
 
+def planes(ycc):
+    """(Y per pixel, U/V per 2x2 block) of a YCbCr strip, as pack() lays it out."""
+    blk = (ycc.astype(int).reshape(ROWS // 2, 2, W // 2, 2, 3).sum(axis=(1, 3)) // 4).astype(np.uint8)
+    return ycc[..., 0], blk[..., 1:]
+
+
 def unpack(buf):
     third, stride = W // 2, W * 3 // 2
     Y = np.zeros((ROWS, W), np.uint8)
@@ -121,7 +128,7 @@ def main():
     tags = cfg.get('tags', True)
     uc, calls = machine()
     fill, steps = [0], [0]
-    uc.hook_add(UC_HOOK_CODE, lambda *_: fill.__setitem__(0, fill[0] + 1), begin=sym['sl'], end=sym['sl'])
+    uc.hook_add(UC_HOOK_CODE, lambda *_: fill.__setitem__(0, fill[0] + 1), begin=sym['filled'], end=sym['filled'])
     uc.hook_add(UC_HOOK_BLOCK, lambda uc_, addr, size, _: steps.__setitem__(0, steps[0] + size // 4))
     kinds = {CACHE_INV: 'inv', CACHE_CLEAN: 'clean', MALLOC: 'malloc'}
     worst, table, ok, n = 0, None, True, 0           # table: the preset the table holds, while on
@@ -164,7 +171,7 @@ def main():
                 continue
             Y, UV = unpack(out)
             # every 2x2 block must be exactly one palette colour, the one the sim picks
-            ref = match(crop, P, wy=WY, lut=LUT, contrast=100 + p.get('contrast', 0), bright=p.get('brightness', 0))
+            ref = look_blocks(*planes(np.asarray(crop.convert('YCbCr'))), p)
             if strip == 0 and tags:
                 add_tag(ref, tag, D)
             diffs.append(differing(Y, UV, np.array(D)[ref]).mean() * 100)

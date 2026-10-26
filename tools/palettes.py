@@ -238,17 +238,32 @@ EG_GREENS = ['2B5322', '4F7945', '77A36E']  # OKLCH L 0.40/0.53/0.67, C 0.09, hu
 EG_UNUSED = {'FF0044', 'FEE761', '2CE8F5'}
 BW_LEVELS = [0, 64, 128, 191, 255]
 BW_MATCH = [0, 80, 128, 176, 255]
+# 6FP's colours since 2026-10-26 (riso6 and its mixes, chosen in the editor; was riso6
+# overprint-expanded to 16), and GBC's: the Game Boy Camera look's grey-greens, from
+# Donald Sayers' fork, dark to light.
+SIX_FP = ['1A1B3A', '3A3C62', 'E0405A', 'F19041', '2AA0A0', 'FFFFFF', '8DC0AF', '7D2D4A',
+          'F0A0AD', '235E6E', '85553E']
+GB_SHADES = ['252525', '4B564D', '9AA57C', 'E0E9C4']
 MATCH = {
     'E': [hex_to_yuv(h) for h in BASE['endesga32'] if h not in EG_UNUSED]
          + [hex_to_yuv(h) for h in EG_GREENS],
-    '6': [c for c, _ in expand(BASE['riso6'], 16)],
+    '6': [hex_to_yuv(h) for h in SIX_FP],
+    'G': [hex_to_yuv(h) for h in GB_SHADES],
     'B': [(y, 128, 128) for y in BW_MATCH],
 }
 # (tag, match palette, film or None), in firmware order: the center button
 # cycles through them, then RND (a random preset per photo/recording).
 PRESETS = [('EP6', 'E', 'polaroid_690'),
            ('6FP', '6', 'fuji_provia_100_generic'),
-           ('BW', 'B', None)]
+           ('BW', 'B', None),
+           ('GBC', 'G', None)]
+# Their settings (2026-10-26, as in the editor): contrast, brightness, sharpening, and
+# GBC as the Game Boy Camera (a ramp, its tone, 4x4 pixels).
+PRESET_SETTINGS = {
+    '6FP': {'contrast': 7, 'brightness': -4, 'sharpen': 16},
+    'BW': {'contrast': 6, 'sharpen': 23},
+    'GBC': {'ramp': True, 'gbTone': True, 'pixel': 4, 'sharpen': 50},
+}
 RND = 'rnd'
 
 
@@ -259,8 +274,8 @@ def presets():
     out = []
     for tag, p, film in PRESETS:
         cols = MATCH[p]
-        if film is None:
-            out.append((tag, cols, [(y, 128, 128) for y in BW_LEVELS]))
+        if film is None:      # BW paints its levels (the S-curve), GBC its own colours
+            out.append((tag, cols, [(y, 128, 128) for y in BW_LEVELS] if p == 'B' else cols))
             continue
         assert SOURCE.get(tag) == [yuv_to_hex(c) for c in cols] and tag in DISPLAY, \
             f'film_colours.py is stale for {tag}: run tools/film.py gen'
@@ -346,10 +361,10 @@ def tag_colours(cols):
 # chosen preset, or rnd. Glyphs per cell (LCD); BW is an 8 and a W over two
 # mirrored cells: full left side + bottom + lower right, then lower left +
 # bottom + full right side.
-SEG7 = {'E': 'adefg', 'F': 'aefg', 'P': 'abefg', '6': 'acdefg', '8': 'abcdefg',
+SEG7 = {'E': 'adefg', 'F': 'aefg', 'P': 'abefg', '6': 'acdefg', '8': 'abcdefg', 'G': 'acdef', 'C': 'adef',
         'W<': 'cdef', 'W>': 'bcde', 'r': 'eg', 'n': 'ceg', 'd': 'bcdeg', 'o': 'cdeg'}
 LCD = {'EP6': ['E', 'P', '6'], '6FP': ['6', 'F', 'P'], 'BW': ['8', 'W<', 'W>'],
-       RND: ['r', 'n', 'd'], 'nor': ['n', 'o', 'r']}
+       'GBC': ['G', '8', 'C'], RND: ['r', 'n', 'd'], 'nor': ['n', 'o', 'r']}
 # Segment -> (HT1621 address, COM) for each SS cell, left to right, found by
 # running the firmware's SS digit routines (FUN_0004a374, FUN_0004a1f0,
 # FUN_0004a074) for 0..9 in tools/emu_seg.py. Each cell is wired differently.
@@ -393,8 +408,13 @@ def lcd_nibbles(segments):
 # Optional per preset (2026-10-26):
 #   contrast    percent added around mid-grey, CONTRAST_RANGE, 0 = as shot
 #   brightness  luma levels added, BRIGHTNESS_RANGE, 0 = as shot
-# (the preset's luma map, built by lut_fill: Y' = (Y - 128) * fix // 128 + 128 +
-# brightness, clamped to 0..255, fix = (100 + contrast) * 128 // 100).
+#   ramp        pick by brightness only: the colours as a ramp of even shades, dark
+#               to light (the build sorts them so), each block's shade from its luma
+#   gbTone      with a ramp: the Game Boy Camera's exposure and shade spacing
+#   pixel       2 or 4: the blocks' size in pixels
+#   sharpen     0..100: horizontal sharpening of the blocks' luma (50 = the Game Boy's)
+# The last four are the Game Boy Camera look, after Donald Sayers' fork; see
+# luma_map, dither_table, ramp_shade and tools/sim_look.py, the exact reference.
 # And (optional, default false) 'normal': the center button also offers the
 # normal mode after rnd (from Donald Sayers' fork): no effect at all, photos and
 # video as the factory makes them, at the factory's sizes. Its code is NORMAL.
@@ -406,7 +426,7 @@ NORMAL = 'nor'
 
 def builtin_config():
     return {'presets': [{'tag': tag, 'match': [list(c) for c in cols], 'paint': [list(c) for c in disp],
-                         'lcd': lcd_segments(tag)} for tag, cols, disp in presets()],
+                         'lcd': lcd_segments(tag), **PRESET_SETTINGS.get(tag, {})} for tag, cols, disp in presets()],
             'rnd': True, 'normal': True}
 
 
@@ -415,10 +435,60 @@ def contrast_fix(p):
     return (100 + p.get('contrast', 0)) * 128 // 100
 
 
+GB_RANGE = (0x89, 0x92, 0xA2, 0xD2)   # gb-photo's shade boundaries on the MAC-GBD code (contrast 7, high light)
+PIXELS = (2, 4)
+SHARPEN_RANGE = (0, 100)
+FX_RAMP, FX_GBTONE, FX_PIX4 = 1, 2, 4     # PRESET_FX flags
+
+
+def gb_tone(t, n):
+    """The Game Boy Camera's tone for a ramp of n shades: its fixed 4x exposure to the MAC-GBD
+    code, 128 + (t - 32) / 2 toward zero, then the code's place among GB_RANGE as u = 0..3
+    (k whole steps + d / w of the next, w its width), stretched over the ramp's n - 1 steps
+    and put in the middle of its shade: (u (n - 1) / 3 + 1/2) * 256 / n, rounded half up.
+    With 4 shades the shades dither between k and k + 1 as the camera's thresholds do."""
+    code = 128 + int((t - 32) / 2)
+    if code < GB_RANGE[0]:
+        k, d, w = 0, 0, 1
+    elif code >= GB_RANGE[3]:
+        k, d, w = 2, 1, 1
+    else:
+        k = max(i for i in range(3) if code >= GB_RANGE[i])
+        d, w = code - GB_RANGE[k], GB_RANGE[k + 1] - GB_RANGE[k]
+    num = 256 * (2 * (k * w + d) * (n - 1) + 3 * w) + 3 * w * n
+    return num // (6 * w * n)
+
+
 def luma_map(p):
-    """What lut_fill puts in the preset's 256-byte luma map."""
+    """What lut_fill puts in the preset's 256-byte luma map: contrast and brightness,
+    clamped, then (with a ramp) the Game Boy tone."""
     fix, b = contrast_fix(p), p.get('brightness', 0)
-    return [max(0, min(255, ((y - 128) * fix >> 7) + 128 + b)) for y in range(256)]
+    out = [max(0, min(255, ((y - 128) * fix >> 7) + 128 + b)) for y in range(256)]
+    if p.get('ramp') and p.get('gbTone'):
+        out = [gb_tone(t, len(p['match'])) for t in out]
+    return out
+
+
+BAYER = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5]
+
+
+def dither_table(p):
+    """The 16 luma offsets lut_fill puts in VARS (index (row & 3) * 4 + (col & 3), in blocks):
+    the Bayer swing of +-32 for a palette, or one shade's width for a ramp of n."""
+    if not p.get('ramp'):
+        return [(b - 8) * 4 for b in BAYER]
+    n = len(p['match'])
+    return [(2 * b + 1) * 8 // n - 128 // n for b in BAYER]
+
+
+def ramp_shade(q, n):
+    """A ramp's shade for luma bin q (the table's, (y + 4) >> 3): its centre's even shade."""
+    return min(n - 1, 8 * q * n >> 8)
+
+
+def sharpen_weight(p):
+    """The sharpening in /128 (64 = 50 %)."""
+    return (p.get('sharpen', 0) * 128 + 50) // 100
 
 
 def tag_width(text):
@@ -435,7 +505,10 @@ def check_config(cfg):
         assert 1 <= len(p['match']) <= NMAX and len(p['paint']) == len(p['match']), p['tag']
         assert all(len(c) == 3 and all(0 <= x <= 255 for x in c) for c in p['match'] + p['paint']), p['tag']
         assert all(isinstance(p.get(k, 0), int) and lo <= p.get(k, 0) <= hi
-                   for k, (lo, hi) in (('contrast', CONTRAST_RANGE), ('brightness', BRIGHTNESS_RANGE))), p['tag']
+                   for k, (lo, hi) in (('contrast', CONTRAST_RANGE), ('brightness', BRIGHTNESS_RANGE),
+                                       ('sharpen', SHARPEN_RANGE))), p['tag']
+        assert isinstance(p.get('ramp', False), bool) and isinstance(p.get('gbTone', False), bool), p['tag']
+        assert p.get('pixel', 2) in PIXELS, p['tag']
         if cfg.get('tags', True):
             assert 1 <= len(p['tag']) <= TAG_LETTERS and all(ch in FONT for ch in p['tag']), p['tag']
             assert tag_width(p['tag']) <= TAG_COLS, f'tag {p["tag"]} is too wide'
@@ -448,8 +521,15 @@ def check_config(cfg):
 
 
 def config():
+    """The config the caves get: a ramp's colours sorted dark to light (by match luma, stably),
+    so the camera's shade k is colour k."""
     path = os.environ.get('PRESETS_JSON')
-    return check_config(json.load(open(path)) if path else builtin_config())
+    cfg = check_config(json.load(open(path)) if path else builtin_config())
+    for p in cfg['presets']:
+        if p.get('ramp'):
+            order = sorted(range(len(p['match'])), key=lambda i: p['match'][i][0])
+            p['match'], p['paint'] = [p['match'][i] for i in order], [p['paint'][i] for i in order]
+    return cfg
 
 
 def config_presets():
@@ -462,9 +542,8 @@ def config_presets():
 # table has room for MAX_PRESETS, so the addresses never move.
 NCOL_BYTES = 3 * NMAX
 TAG_BYTES = (TAG_ROWS * TAG_COLS + 3) // 4 + 2   # 2-bit cells, dark and light offset
-# PRESET_FX, per preset: a flags byte (0, for kinds of preset to come, e.g. a
-# Game Boy look), the luma map's contrast_fix, its brightness (a signed byte),
-# a spare byte.
+# PRESET_FX, per preset: flags (FX_RAMP, FX_GBTONE, FX_PIX4), the luma map's
+# contrast_fix, its brightness (a signed byte), the sharpening weight (/128).
 FX_BYTES = 4
 PD = {'MATCH': 0xbbc00}
 PD['PMATCH'] = PD['MATCH'] + MAX_PRESETS * (1 + NCOL_BYTES)
@@ -478,7 +557,9 @@ LCD_BYTES = (MAX_PRESETS + 2) * SS_COUNT       # LCD_TAGS in lcd_cave.s: MAX_PRE
 
 
 def fx_bytes(p):
-    return [0, contrast_fix(p), p.get('brightness', 0) & 0xff, 0]
+    flags = (FX_RAMP * bool(p.get('ramp')) | FX_GBTONE * bool(p.get('ramp') and p.get('gbTone'))
+             | FX_PIX4 * (p.get('pixel', 2) == 4))
+    return [flags, contrast_fix(p), p.get('brightness', 0) & 0xff, sharpen_weight(p)]
 
 
 def tag_bytes(tag, paint):
@@ -512,6 +593,8 @@ def main():
         print(f'    .space  {FX_BYTES * (MAX_PRESETS - n)}' if n < MAX_PRESETS else '')
         print('    .endm')
         print(f'    .equ    FX_BYTES, {FX_BYTES}')
+        print(f'    .equ    FX_RAMP, {FX_RAMP}\n    .equ    FX_GBTONE, {FX_GBTONE}\n    .equ    FX_PIX4, {FX_PIX4}')
+        print(f'    .equ    MAX_BLOCKS, {SIZE_LIMITS["maxW"] // 2}       @ blocks in a row, at most')
         print('    .macro  PRESET_MATCH_DATA             @ per preset: index of its match palette')
         print('    .byte ' + ', '.join(str(i) for i in range(n)))
         print(f'    .space  {MAX_PRESETS - n}' if n < MAX_PRESETS else '')

@@ -1,7 +1,10 @@
 @ Palette dithering via a lookup table. Per 2x2 block (one chroma pair in
-@ 4:2:0) the hook averages the 4 luma, takes it through the preset's luma map
-@ (its contrast and brightness), adds a 4x4 Bayer offset, then looks the
-@ block's (Y, U, V) up in a table that holds the nearest palette colour. The table (33x33x33: Y, U, V in steps of 8, bins
+@ 4:2:0; or 4x4 with FX_PIX4, video_cave.s fx4) fx_strip averages the luma,
+@ takes it through the preset's luma map (its contrast and brightness, and
+@ the Game Boy tone), sharpens it against its row neighbours, adds the
+@ look's dither offset, then looks the block's (Y, U, V) up in a table that
+@ holds the nearest palette colour (or for a ramp, FX_RAMP, the even shade of
+@ its luma). tools/sim_look.py is the exact reference. The table (33x33x33: Y, U, V in steps of 8, bins
 @ centred on multiples of 8) is filled once per photo by lut_build, entered
 @ from idx_stub (hooks FUN_000187c4, the capture handler, task context), which
 @ also sets the photo's preset: the one chosen with the center button (the
@@ -21,13 +24,17 @@
 @ hook) from the object file.
     .syntax unified
     .arm
-    .include "palettes.inc"               @ NPAL, TAG_*
+    .include "palettes.inc"               @ NPAL, TAG_*, FX_*, MAX_BLOCKS
+    .include "look.inc"                   @ VARS offsets, CLAMP, SHARPEN, LOOKUP
 base:
     .set    MATCH_PALETTES, base + MATCH_ADDR    @ preset_data.s (from build.sh)
     .set    PRESET_MATCH,   base + PMATCH_ADDR
     .set    DISPLAY_PTRS,   base + DPTRS_ADDR
     .set    TAGS,           base + TAGS_ADDR
-    .set    PRESET_FX,      base + FX_ADDR    @ per preset: contrast, brightness
+    .set    PRESET_FX,      base + FX_ADDR    @ per preset: flags, contrast, brightness, sharpening
+    .set    GB_TONE_FILL,   base + GBTONE_ADDR @ preset_data.s: the Game Boy tone, over a luma map
+    .set    UDIV,           base + UDIV_ADDR  @ preset_data.s: r0 / r1
+    .set    FX4,            base + 0xbb774    @ video_cave.s: fx_strip for 4x4 blocks (fixed)
     .set    RESUME,      base + 0x1544c
     .set    PHOTO_PATH,  base + 0xf188
     .set    VIDEO_PATH,  base + 0xf410
@@ -40,13 +47,9 @@ base:
     .equ    TICK,        0x126b80         @ FreeRTOS xTickCount
     .equ    LUT_N,       33               @ entries per axis: (x + 4) >> 3
     .equ    LUT_SIZE,    LUT_N * LUT_N * LUT_N
-    .equ    YMAP_BYTES,  256              @ the luma map, right before the table
-    .equ    FX_CONTRAST, 1                @ offsets into a PRESET_FX record
+    .equ    FX_CONTRAST, 1                @ offsets into a PRESET_FX record (byte 0: the flags)
     .equ    FX_BRIGHT,   2
-    .equ    LUT_PTR,     0                @ offsets into VARS
-    .equ    CUR_PAL,     4
-    .equ    PAL_IDX,     8                @ preset of the current photo/video
-    .equ    STRIP_N,     12               @ strips processed in this photo
+    .equ    FX_SHARP,    3
     .equ    CFG,         0x132160         @ the camera's settings, saved to NVRAM at power-off
     .equ    CFG_MODE,    0xf1             @ our byte in it: chosen preset, or NPAL = random (lcd_cave.s)
     .if     TAG_SCALE != 2
@@ -85,86 +88,8 @@ hook:
     mov     r1, r7, lsl #6
     mov     lr, pc
     b       CACHE_INV
-    ldr     r0, =VARS - base                     @ reload: the call may clobber r12
-    ldr     r12, [r0, #LUT_PTR]           @ r12 = table
-    ldr     r5, [r0, #CUR_PAL]            @ r5 = palette colours (Y,U,V each)
-    mov     r10, #0                       @ r10 = band index b (0..31)
-bandloop:
-    mov     r9, #0                        @ r9 = block index c, x = 2c
-pixloop:
-    @ ---- representative luma = average of the 4 block pixels ----
-    add     r6, r11, r9, lsl #1           @ even luma addr (x, x+1)
-    ldrb    r0, [r6]
-    ldrb    r1, [r6, #1]
-    add     r0, r0, r1
-    add     r6, r11, r7                   @ odd_base
-    add     r6, r6, r8                    @ + third (odd luma starts there)
-    add     r6, r6, r9, lsl #1            @ + x
-    ldrb    r1, [r6]
-    ldrb    r2, [r6, #1]
-    add     r0, r0, r1
-    add     r0, r0, r2                    @ sum of 4 luma
-    mov     r0, r0, lsr #2                @ repY
-    @ ---- contrast / brightness: the preset's luma map (lut_fill) ----
-    add     r0, r12, r0
-    ldrb    r0, [r0, #-YMAP_BYTES]
-    @ ---- Bayer dither: repY += (BAYER[b&3][c&3] - 8) * 4, clamped 0..255 ----
-    ldr     lr, =BAYER - base
-    and     r6, r10, #3
-    add     lr, lr, r6, lsl #2
-    and     r6, r9, #3
-    ldrb    r6, [lr, r6]
-    sub     r6, r6, #8
-    add     r0, r0, r6, lsl #2
-    cmp     r0, #0
-    movlt   r0, #0
-    cmp     r0, #255
-    movgt   r0, #255                      @ r0 = Yp
-    @ ---- chroma U,V of this block (split at third/2, even chroma at +2*third) ----
-    cmp     r9, r8, lsr #1
-    addlo   r6, r11, r8, lsl #1
-    addlo   r6, r6, r9, lsl #1
-    subhs   r1, r9, r8, lsr #1
-    addhs   r6, r11, r7
-    addhs   r6, r6, r1, lsl #1            @ r6 = chroma pair addr (kept for the write)
-    ldrb    r1, [r6]                      @ U
-    ldrb    r2, [r6, #1]                  @ V
-    @ ---- table lookup: ((yq*33 + uq)*33 + vq), q = (x + 4) >> 3 ----
-    add     r0, r0, #4
-    mov     r0, r0, lsr #3
-    add     r1, r1, #4
-    mov     r1, r1, lsr #3
-    add     r2, r2, #4
-    mov     r2, r2, lsr #3
-    add     r0, r0, r0, lsl #5            @ yq * 33
-    add     r0, r0, r1
-    add     r0, r0, r0, lsl #5            @ * 33
-    add     r0, r0, r2
-    ldrb    r3, [r12, r0]                 @ byte offset of the colour (3 * index)
-    add     r4, r5, r3
-    ldrb    r0, [r4]                      @ pY
-    ldrb    r1, [r4, #1]                  @ pU
-    ldrb    r2, [r4, #2]                  @ pV
-    @ ---- write the palette colour to the whole 2x2 block ----
-    strb    r1, [r6]                      @ chroma pair
-    strb    r2, [r6, #1]
-    add     r6, r11, r9, lsl #1           @ even luma (x, x+1)
-    strb    r0, [r6]
-    strb    r0, [r6, #1]
-    add     r6, r11, r7                   @ odd luma (x, x+1)
-    add     r6, r6, r8
-    add     r6, r6, r9, lsl #1
-    strb    r0, [r6]
-    strb    r0, [r6, #1]
-    add     r9, r9, #1
-    cmp     r9, r8                        @ third chroma pairs (= width/2) per band
-    blo     pixloop
-    add     r11, r11, r7, lsl #1          @ even_base += 2*stride
-    add     r10, r10, #1
-    cmp     r10, #32
-    blo     bandloop
-
-    sub     r11, r11, r7, lsl #6          @ r11 = strip base again
+    mov     lr, pc                        @ the look (r5 = paint colours, kept)
+    b       fx_strip
     @ ---- first strip of the photo: draw the palette tag, top right ----
     ldr     r0, =VARS - base
     ldr     r1, [r0, #STRIP_N]
@@ -183,6 +108,88 @@ done:
     pop     {r0-r11, lr}
     str     lr, [sp, #-4]!
     b       RESUME
+    .ltorg
+
+@ The look, on one 64-row strip; both hooks call this. r11 = strip, r7 =
+@ stride (1.5 W), r8 = third (W / 2). All registers preserved. Per row of
+@ blocks: first every block's mapped luma into the row buffer (so sharpening
+@ sees its neighbours as they were), then each block: sharpening, the dither
+@ offset of its position, its U, V, the table, painted. 4x4 blocks: fx4 in
+@ the video cave, which ends as fxdone does.
+fx_strip:
+    push    {r0-r12, lr}
+    sub     sp, sp, #4                    @ [sp] = the sharpening weight
+    cmp     r8, #MAX_BLOCKS               @ wider than any of ours (the row buffer): leave it
+    bhi     fxdone
+    ldr     r0, =VARS - base
+    ldr     r12, [r0, #LUT_PTR]           @ r12 = table
+    ldr     r5, [r0, #CUR_PAL]            @ r5 = paint colours
+    ldrb    r1, [r0, #SHARP_W]
+    str     r1, [sp]
+    ldrb    r1, [r0, #FLAGS]
+    sub     r4, r12, #ROWBUF_BYTES + YMAP_BYTES
+    add     r4, r4, #1                    @ r4 = the row buffer (padded: -1 is free)
+    tst     r1, #FX_PIX4
+    bne     FX4
+    mov     r10, #0                       @ r10 = band (a row of 2x2 blocks), 0..31
+fx2:
+    sub     lr, r12, #YMAP_BYTES          @ lr = the luma map
+    add     r6, r11, r7
+    add     r6, r6, r8                    @ r6 = the odd row's luma
+    mov     r9, #0                        @ r9 = block c, x = 2c
+1:  add     r2, r11, r9, lsl #1
+    ldrb    r0, [r2]
+    ldrb    r1, [r2, #1]
+    add     r0, r0, r1
+    add     r2, r6, r9, lsl #1
+    ldrb    r1, [r2]
+    add     r0, r0, r1
+    ldrb    r1, [r2, #1]
+    add     r0, r0, r1
+    ldrb    r0, [lr, r0, lsr #2]          @ the 4 luma's mean, mapped
+    strb    r0, [r4, r9]
+    add     r9, r9, #1
+    cmp     r9, r8
+    blo     1b
+    PAD     r8
+    ldr     lr, =VARS - base + DITHER
+    and     r0, r10, #3
+    add     lr, lr, r0, lsl #2            @ lr = this band's 4 dither offsets
+    mov     r9, #0
+2:  ldrb    r0, [r4, r9]
+    SHARPEN
+    and     r1, r9, #3
+    ldrsb   r1, [lr, r1]
+    add     r0, r0, r1
+    CLAMP
+    cmp     r9, r8, lsr #1                @ the chroma pair: in the even row's chroma,
+    addlo   r6, r11, r8, lsl #1           @  or the odd row's
+    addlo   r6, r6, r9, lsl #1
+    subhs   r1, r9, r8, lsr #1
+    addhs   r6, r11, r7
+    addhs   r6, r6, r1, lsl #1            @ r6 = the pair
+    ldrb    r1, [r6]
+    ldrb    r2, [r6, #1]
+    LOOKUP
+    strb    r1, [r6]                      @ paint the block
+    strb    r2, [r6, #1]
+    add     r6, r11, r9, lsl #1
+    strb    r0, [r6]
+    strb    r0, [r6, #1]
+    add     r6, r6, r7
+    add     r6, r6, r8
+    strb    r0, [r6]
+    strb    r0, [r6, #1]
+    add     r9, r9, #1
+    cmp     r9, r8
+    blo     2b
+    add     r11, r11, r7, lsl #1          @ next band
+    add     r10, r10, #1
+    cmp     r10, #32
+    blo     fx2
+fxdone:
+    add     sp, sp, #4
+    pop     {r0-r12, pc}
     .ltorg
 
 @ Draw the current preset's tag in the top right corner of a strip:
@@ -306,14 +313,14 @@ npal_fill:
     ldr     r6, [r4, #LUT_PTR]
     cmp     r6, #0
     bne     2f
-    ldr     r0, =YMAP_BYTES + LUT_SIZE
+    ldr     r0, =ROWBUF_BYTES + YMAP_BYTES + LUT_SIZE
     mov     r1, #0x40
     mov     lr, pc
     b       MALLOC
     ldr     r4, =VARS - base
     movs    r6, r0
     beq     9f                            @ no memory: photo stays unprocessed
-    add     r6, r6, #YMAP_BYTES           @ r6 = table write pointer
+    add     r6, r6, #ROWBUF_BYTES + YMAP_BYTES  @ r6 = table write pointer
     str     r6, [r4, #LUT_PTR]
 2:  ldr     r0, [r4, #PAL_IDX]
     ldr     r5, =PRESET_MATCH - base
@@ -325,7 +332,13 @@ npal_fill:
     addpl   r5, r5, r1
     addpl   r5, r5, r1, lsl #1
     bpl     3b
-    ldrb    r12, [r5], #1                 @ r5 = colours
+    ldrb    r12, [r5], #1                 @ r5 = colours, r12 = count
+    strb    r12, [r4, #NCOL]
+    ldr     r0, [r4, #PAL_IDX]
+    ldr     r1, =PRESET_FX - base
+    ldrb    r1, [r1, r0, lsl #2]
+    tst     r1, #FX_RAMP
+    bne     ramp
     add     r12, r12, r12, lsl #1         @ r12 = 3 * count
     mov     r7, #0                        @ r7/r8/r9 = Y/U/V bin centre
 yl: mov     r8, #0
@@ -361,10 +374,30 @@ sl: ldrb    r1, [r2], #1
     add     r7, r7, #8
     cmp     r7, #LUT_N * 8
     blo     yl
+    b       filled
+ramp:                                   @ a ramp: luma bin q -> its even shade, min(n - 1, 8qn >> 8),
+    mov     r7, #0                        @  whatever U, V (the colours are sorted dark to light)
+1:  mul     r0, r7, r12
+    mov     r0, r0, lsr #5
+    cmp     r0, r12
+    subhs   r0, r12, #1
+    add     r0, r0, r0, lsl #1            @ its offset, 3 * shade
+    ldr     r1, =LUT_N * LUT_N
+2:  strb    r0, [r6], #1
+    subs    r1, r1, #1
+    bne     2b
+    add     r7, r7, #1
+    cmp     r7, #LUT_N
+    blo     1b
+filled:
     ldr     r4, =VARS - base
     ldr     r0, [r4, #PAL_IDX]
     ldr     r1, =PRESET_FX - base
     add     r1, r1, r0, lsl #2
+    ldrb    r9, [r1]                      @ r9 = the look's flags
+    strb    r9, [r4, #FLAGS]
+    ldrb    r2, [r1, #FX_SHARP]
+    strb    r2, [r4, #SHARP_W]
     ldrb    r2, [r1, #FX_CONTRAST]
     ldrsb   r3, [r1, #FX_BRIGHT]
     add     r3, r3, #128
@@ -382,6 +415,36 @@ ym: sub     r1, r7, #128
     add     r7, r7, #1
     cmp     r7, #256
     blo     ym
+    tst     r9, #FX_GBTONE                @ then the Game Boy tone over it
+    movne   r0, r6
+    ldrbne  r1, [r4, #NCOL]
+    movne   lr, pc
+    bne     GB_TONE_FILL
+    ldrb    r10, [r4, #NCOL]              @ the dither offsets: (B - 8) * 4, or for a ramp
+    mov     r7, #0                        @  of n one shade, (2B + 1) * 8 / n - 128 / n
+dt: ldr     r0, =BAYER - base
+    ldrb    r0, [r0, r7]
+    tst     r9, #FX_RAMP
+    subeq   r0, r0, #8
+    moveq   r0, r0, lsl #2
+    beq     5f
+    mov     r0, r0, lsl #4
+    add     r0, r0, #8
+    mov     r1, r10
+    mov     lr, pc
+    b       UDIV
+    mov     r11, r0
+    mov     r0, #128
+    mov     r1, r10
+    mov     lr, pc
+    b       UDIV
+    sub     r0, r11, r0
+5:  add     r1, r4, #DITHER
+    strb    r0, [r1, r7]
+    add     r7, r7, #1
+    cmp     r7, #16
+    blo     dt
+    ldr     r0, [r4, #PAL_IDX]
     ldr     r1, =DISPLAY_PTRS - base
     ldr     r5, [r1, r0, lsl #2]          @ the preset's film colours
     str     r5, [r4, #CUR_PAL]            @ table complete: hook on
@@ -422,6 +485,8 @@ VARS:
     .word   0                             @ CUR_PAL: film colours of the table's preset, 0 = off
     .word   0xff                          @ PAL_IDX: last photo's preset (0xff = none yet)
     .word   0                             @ STRIP_N
+    .byte   0, 0, 0, 0                    @ FLAGS, SHARP_W, NCOL
+    .space  16                            @ DITHER
 
 @ Size stubs, reached directly from the photo resolution jump table
 @ (ldrls pc,[pc,idx,lsl#2] @ 0xf3c8, table @ 0xf3d0) and the video one

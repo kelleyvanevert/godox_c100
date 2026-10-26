@@ -43,6 +43,10 @@ function randomConfig(i) {
     const match = Array.from({ length: size }, colour);
     const paint = rand() < 0.5 ? match : Array.from({ length: size }, colour);
     const fx = rand() < 0.6 ? { contrast: between(m.fx.contrast), brightness: between(m.fx.brightness) } : {};
+    if (rand() < 0.5) {
+      const ramp = rand() < 0.5;
+      Object.assign(fx, { ramp, gbTone: ramp && rand() < 0.5, pixel: rand() < 0.5 ? 4 : 2, sharpen: between(m.fx.sharpen) });
+    }
     return { tag: randomTag(taken), match, paint, ...fx, lcd };
   });
   const sizes = rand() < 0.6 ? Object.fromEntries(Object.keys(m.sizes).map((k) => [k, randomSize()])) : undefined;
@@ -71,5 +75,5 @@ for (let i = 0; i < count; i++) {
   const fw = buildFirmware(template, m, cfg, s);
   writeFileSync(`${dir}/editor.bin`, fw);
   if (i === 0 && !fw.every((b, k) => b === template[k])) throw new Error("case 0 should equal the template");
-  console.log(`case${i}: ${cfg.presets.length} presets (${cfg.presets.map((p) => `${p.tag}:${p.match.length}${p.contrast !== undefined ? `/c${p.contrast}b${p.brightness}` : ""}`).join(" ")}), rnd ${cfg.rnd}, normal ${cfg.normal}, sounds ${cfg.sounds}, tags ${cfg.tags ?? true}, sizes ${cfg.sizes ? Object.values(cfg.sizes).map((s) => s.join("x")).join(" ") : "default"}`);
+  console.log(`case${i}: ${cfg.presets.length} presets (${cfg.presets.map((p) => `${p.tag}:${p.match.length}${p.contrast !== undefined ? `/c${p.contrast}b${p.brightness}` : ""}${p.pixel ? `/${p.ramp ? "ramp" : "near"}${p.gbTone ? "+gb" : ""}/px${p.pixel}/s${p.sharpen}` : ""}`).join(" ")}), rnd ${cfg.rnd}, normal ${cfg.normal}, sounds ${cfg.sounds}, tags ${cfg.tags ?? true}, sizes ${cfg.sizes ? Object.values(cfg.sizes).map((s) => s.join("x")).join(" ") : "default"}`);
 }

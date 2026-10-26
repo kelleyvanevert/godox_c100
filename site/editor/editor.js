@@ -2,7 +2,7 @@
 // display code), each on or off, rnd and the normal mode, tags on or off, photo sizes
 // and sounds; previewed on nine photos, kept in localStorage,
 // and built into a firmware in the browser (firmware.js) from the template.
-import { buildFirmware, configErrors, cropFor, encodeWav, hexToYuv, lumaMap, sha256, sizeErrors, slotSamples, tagCells, tagColours, tagWidth, yuvToHex, yuvToRgb } from "./firmware.js";
+import { buildFirmware, configErrors, cropFor, encodeWav, hexToYuv, sha256, sortedRamp, sizeErrors, slotSamples, tagCells, tagColours, tagWidth, yuvToHex, yuvToRgb } from "./firmware.js";
 import { paintColours } from "./films.js";
 import { buildLut, cameraFrame, render } from "./sim.js";
 
@@ -13,7 +13,7 @@ const PHOTOS = [
 ].map((f) => `editor/photos/${f}.jpg`);
 const noPhotos = () => PHOTOS.map(() => null);
 const DEFAULT_SLOTS = [
-  "EP6", "6FP", "BW", "GBC (4)",
+  "EP6", "6FP", "BW", "GBC",
   "db16 (16)", "sweetie16 (16)", "riso6 (6)", "nes (32)",
 ];
 const DEFAULT_ON = 4; // EP6, 6FP, BW and GBC
@@ -75,14 +75,13 @@ function slotFrom(item, on) {
   };
 }
 
-// The Game Boy Camera's parts, each on its own (preview only so far): the
-// colours as a ramp picked by brightness alone (shades), its tone (with a ramp
+// The Game Boy Camera's parts, each on its own: the colours as a ramp picked
+// by brightness alone (shades; the firmware's ramp), its tone (with a ramp
 // only), 4x4 pixels, sharpening.
 // A library preset may set them; otherwise they're off.
 function gbBits(item) {
   return { shades: !!item.shades, gbTone: !!item.gbTone, pixel: item.pixel ?? 2, sharpen: item.sharpen ?? 0 };
 }
-const usesGbBits = (p) => p.shades || p.pixel !== 2 || p.sharpen > 0;
 
 const defaultSizes = () => structuredClone(m.sizes);
 
@@ -170,7 +169,10 @@ async function config() {
 
 // A slot as the firmware takes it (firmware.js), given its paint colours.
 function presetOf(p, paint) {
-  return { tag: p.tag, match: p.colours, paint, contrast: p.contrast, brightness: p.brightness, lcd: p.lcd };
+  return {
+    tag: p.tag, match: p.colours, paint, contrast: p.contrast, brightness: p.brightness,
+    ramp: p.shades, gbTone: p.shades && p.gbTone, pixel: p.pixel, sharpen: p.sharpen, lcd: p.lcd,
+  };
 }
 
 function changed({ list = true, palette = false, preview = true } = {}) {
@@ -568,7 +570,7 @@ function renderPalette() {
     ${fxRow(p, "contrast")}
     ${fxRow(p, "brightness")}
     <div class="ed-gb">
-      <p class="note">From the Game Boy Camera. Preview only for now: the download doesn't include these yet.</p>
+      <p class="note">From the Game Boy Camera, each on its own.</p>
       <div class="ed-row">
         <span class="label">Ramp</span>
         <label class="ed-check"><input type="checkbox" id="ed-shades" ${p.shades ? "checked" : ""} />
@@ -1005,10 +1007,9 @@ async function renderPreview() {
   const paint = await paintOf(p);
   if (current() !== p) return;
   const drawable = state.tags && [...p.tag].every((ch) => m.font[ch]) && tagWidth(m, p.tag) <= m.tag.cols;
-  // even shades: the colour indices by brightness, dark to light
-  const shades = p.shades ? p.colours.map((c, i) => [c[0], i]).sort((a, b) => a[0] - b[0]).map(([, i]) => i) : null;
-  const preset = { tag: drawable ? p.tag : "", match: p.colours, paint, ymap: lumaMap(p), shades, pixel: p.pixel, sharpen: p.sharpen / 100 };
-  const lut = shades ? null : buildLut(preset.match, m.wy);
+  // as the firmware gets it: a ramp's colours sorted dark to light
+  const preset = { ...sortedRamp(presetOf(p, paint)), tag: drawable ? p.tag : "" };
+  const lut = preset.ramp ? null : buildLut(preset.match, m.wy);
   document.querySelectorAll(".ed-photo canvas").forEach((canvas, i) => {
     const frame = frames[i];
     if (!frame) return;
@@ -1296,8 +1297,7 @@ function renderDownload() {
   $("#ed-summary").textContent =
     `${on.length} look${on.length === 1 ? "" : "s"} (${on.map((p) => (state.tags ? p.tag || "?" : p.name)).join(", ")})` +
     `${rnd ? " + rnd" : ""}${state.normal ? " + nor" : ""} · ${state.tags ? "tagged" : "no tags"}${sized ? " · own sizes" : ""}` +
-    ` · ${state.sounds.on ? "sounds on" : "silent"}` +
-    (on.some(usesGbBits) ? " · the Game Boy settings are preview only, not in the download yet" : "");
+    ` · ${state.sounds.on ? "sounds on" : "silent"}`;
   $("#ed-errors").innerHTML = errors.map((e) => `<li>${esc(e)}</li>`).join("");
   $("#ed-download").disabled = errors.length > 0;
 }

@@ -33,7 +33,7 @@ import palettes as P
 from gp_res import parse
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-TEMPLATE = 'v023_editor_template.bin'
+TEMPLATE = 'v024_editor_template.bin'
 SITE = os.path.join(ROOT, 'site', 'editor')
 ORIG = os.path.join(ROOT, 'c100_v1.1.6_20260929', 'GP_CARDVR_UPGRADE.BIN')
 APP = 0x10200                     # file offset of RAM address 0
@@ -47,22 +47,9 @@ FILMS = [('polaroid_690', 'Polaroid 690'), ('fuji_provia_100_generic', 'Fuji Pro
          ('kodak_ektar_100', 'Kodak Ektar 100'), ('agfa_vista_200', 'Agfa Vista 200'),
          ('fuji_superia_200', 'Fuji Superia 200'), ('polaroid_669', 'Polaroid 669'),
          ('lomography_x-pro_slide_200', 'Lomography X-Pro 200'), ('lomography_redscale_100', 'Lomography Redscale 100')]
-LIBRARY_SKIP = {'endesga32'}   # EP6 is endesga32, reworked (palettes.py PRESETS)
-PRESET_FILMS = {'EP6': 'polaroid_690', '6FP': 'fuji_provia_100_generic', 'BW': None}
-PRESET_CURVE = {'BW'}
-# The editor's take on the built-in presets (2026-10-26): own colours, contrast, brightness and
-# sharpening (preview only so far). The firmware's built-in presets (palettes.py) are as they were.
-PRESET_TUNING = {
-    '6FP': {'colours': ['1A1B3A', '3A3C62', 'E0405A', 'F19041', '2AA0A0', 'FFFFFF', '8DC0AF', '7D2D4A',
-                        'F0A0AD', '235E6E', '85553E'], 'contrast': 7, 'brightness': -4, 'sharpen': 16},
-    'BW': {'contrast': 6, 'sharpen': 23},
-}
-# The Game Boy Camera look, as Donald Sayers' fork's Game Boy mode (after PIXELBOY's gbcam.c;
-# preview only so far): even shades by brightness, its tone, 4x4 pixels, 50 % sharpening.
-# GB_LOOKS: base palettes the editor offers that way, with the colours they get instead: the
-# fork's default grey-greens, dark to light (the tone is made for 4 shades).
-GB_SETTINGS = {'shades': True, 'gbTone': True, 'pixel': 4, 'sharpen': 50}
-GB_LOOKS = {'GBC': ['252525', '4B564D', '9AA57C', 'E0E9C4']}   # BW's look is the S-curve: BW_MATCH -> BW_LEVELS on luma
+LIBRARY_SKIP = {'endesga32', 'GBC'}   # EP6 is endesga32, reworked; GBC is a preset (palettes.py PRESETS)
+PRESET_FILMS = {'EP6': 'polaroid_690', '6FP': 'fuji_provia_100_generic', 'BW': None, 'GBC': None}
+PRESET_CURVE = {'BW'}   # BW's look is the S-curve: BW_MATCH -> BW_LEVELS on luma
 # The preview photos, in grid order (3 x 3): streets, natural, close-ups
 # (images/ isn't committed; the results in site/editor/photos/ are). Each is
 # cropped to 4:3, the camera's 4:3 photo, a bit above the centre if it's
@@ -141,7 +128,8 @@ def manifest(fw):
         'maxPresets': P.MAX_PRESETS,
         'maxColours': P.NMAX,
         'pd': P.PD,
-        'fx': {'bytes': P.FX_BYTES, 'contrast': P.CONTRAST_RANGE, 'brightness': P.BRIGHTNESS_RANGE},
+        'fx': {'bytes': P.FX_BYTES, 'contrast': P.CONTRAST_RANGE, 'brightness': P.BRIGHTNESS_RANGE,
+               'sharpen': P.SHARPEN_RANGE, 'pixels': P.PIXELS},
         'tag': {'letters': P.TAG_LETTERS, 'rows': P.TAG_ROWS, 'cols': P.TAG_COLS, 'bytes': P.TAG_BYTES,
                 'scale': P.TAG_SCALE, 'top': P.TAG_TOP, 'right': P.TAG_RIGHT},
         'font': P.FONT,
@@ -173,22 +161,17 @@ def manifest(fw):
 
 def library():
     assert {f for _, _, f in P.PRESETS if f} <= {f for f, _ in FILMS}
+    # the presets with their settings (the editor calls a ramp "shades")
     palettes = [{'name': f'{p["tag"]}', 'tag': p['tag'], 'colours': p['match'],
-                 'film': PRESET_FILMS[p['tag']], 'curve': p['tag'] in PRESET_CURVE, 'lcd': p['lcd']}
+                 'film': PRESET_FILMS[p['tag']], 'curve': p['tag'] in PRESET_CURVE, 'lcd': p['lcd'],
+                 **{k: p[k] for k in ('contrast', 'brightness', 'gbTone', 'pixel', 'sharpen') if k in p},
+                 **({'shades': True} if p.get('ramp') else {})}
                 for p in P.builtin_config()['presets']]
-    for item in palettes:
-        tuned = dict(PRESET_TUNING.get(item['tag'], {}))
-        if 'colours' in tuned:
-            tuned['colours'] = [list(P.hex_to_yuv(h)) for h in tuned['colours']]
-        item.update(tuned)
     for name, hexes in P.BASE.items():
         if name in LIBRARY_SKIP:
             continue
-        if name in GB_LOOKS:            # as the Game Boy Camera: its 4 shades, all its settings
-            hexes = GB_LOOKS[name]
         base = [list(P.hex_to_yuv(h)) for h in dict.fromkeys(hexes)]
-        palettes.append({'name': f'{name} ({len(base)})', 'tag': P.TAG[name], 'colours': base, 'film': None, 'curve': False,
-                         **(GB_SETTINGS if name in GB_LOOKS else {})})
+        palettes.append({'name': f'{name} ({len(base)})', 'tag': P.TAG[name], 'colours': base, 'film': None, 'curve': False})
     films = [{'id': f, 'name': name, 'file': f'films/{f}.png'} for f, name in FILMS]
     curve = [[0, 0]] + [list(p) for p in zip(P.BW_MATCH, P.BW_LEVELS)][1:-1] + [[255, 255]]
     return {'palettes': palettes, 'films': films, 'curve': curve}

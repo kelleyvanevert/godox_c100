@@ -2,11 +2,11 @@
 
 _Last updated 2026-10-26_
 
-**Working on the camera (`v023`):** pixel-art photos and videos at ~274k
-pixels for every aspect ratio, three presets (EP6, 6FP, BW) plus rnd and the
-normal mode (no effect, the factory's sizes) chosen
-with the center button and remembered across power-off, contrast and
-brightness per preset, the preset's tag on
+**Working on the camera (`v024`):** pixel-art photos and videos at ~274k
+pixels for every aspect ratio, four presets (EP6, 6FP, BW and GBC, the Game
+Boy Camera look) plus rnd and the normal mode (no effect, the factory's sizes)
+chosen with the center button and remembered across power-off, contrast,
+brightness and the Game Boy Camera settings per preset, the preset's tag on
 photos and video and its code on the see-through display, and a silent
 camera. The preset data has fixed slots, so the
 [site's editor](#the-sites-firmware-editor) builds custom firmware (1–8
@@ -44,6 +44,7 @@ small resolution, a limited colour palette, and dithering.
 | Table kept when the preset doesn't change (no ~60 ms fill before the capture) | built (`v015`), emulator |
 | [Normal mode](#the-normal-mode-no-effect) (`nor`, after rnd): no effect, the factory's sizes (`v023`) | on the camera, working (`v023`, 2026-10-26) |
 | [Contrast and brightness per preset](#contrast-and-brightness-per-preset) (a luma map, also 5 instructions per block less) | on the camera, working (`v023`, 2026-10-26) |
+| [Game Boy Camera settings](#game-boy-camera-settings) per look: ramp, Game Boy tone, 4×4 pixels, sharpening; GBC as the fourth built-in look; 6FP with 11 colours (`v024`) | on the camera, working (`v024`, 2026-10-26) |
 
 Open: [repeated frames](#timing-and-headroom) in some dithered videos.
 
@@ -124,9 +125,14 @@ In `tools/`:
 - `sort_images.py` — reads the palette tag off each photo/video in `images/`
   and moves it to `images/<tag>/` (rerun after adding new ones).
   `sim_dither.py` is the early grayscale-ramp version.
+- `sim_look.py` — the exact reference of a look on one strip of the camera's
+  own data (since `v024`: luma map, Game Boy tone, sharpening, dither, ramp or
+  nearest colour, 2×2 or 4×4). `look_check.mjs` / `look_check.py` check the
+  editor's preview against it (part of `editor_check.sh`).
 - `emu_cave.py` — runs the built photo cave in an ARM emulator (Unicorn) and
-  checks it pixel-for-pixel against `sim_palette.py`. `emu_video.py` — the
-  same for the video hook. Both run against `build/GP_CARDVR_UPGRADE.BIN`:
+  checks it pixel-for-pixel against `sim_look.py`, per look of the config
+  (`PRESETS_JSON`). `emu_video.py` — the same for the video hook, per look,
+  with its share of the frame time. Both run against `build/GP_CARDVR_UPGRADE.BIN`:
 
   ```
   uv run --with unicorn,numpy,pillow tools/emu_cave.py images/IMG_0184.jpg
@@ -203,9 +209,14 @@ which shifts every address after them).
   The site's default download until v023.
 - `v023_editor_template.bin` — v022 plus the [normal mode](#the-normal-mode-no-effect)
   (after rnd) and [contrast and brightness per
-  preset](#contrast-and-brightness-per-preset). The current build and the
-  editor's template, and the site's default download. Works on the camera
-  (2026-10-26).
+  preset](#contrast-and-brightness-per-preset). The site's default download
+  until v024. Works on the camera (2026-10-26).
+- `v024_editor_template.bin` — v023 plus the [Game Boy Camera
+  settings](#game-boy-camera-settings) (ramp, tone, 4×4 pixels, sharpening; one
+  strip routine for both hooks), GBC as a fourth built-in look and 6FP with 11
+  colours, with the editor's contrast, brightness and sharpening for 6FP and
+  BW. The current build, the editor's template and the site's default
+  download. Works on the camera (2026-10-26).
 
 ## Code caves and hooks
 
@@ -426,19 +437,27 @@ the capture starts):
    strips alone (and the [normal mode](#the-normal-mode-no-effect) only sets
    it to 0). `lut_build` also resets the strip counter `STRIP_N`.
 
-**Per strip — `hook`** (interrupt), per 2×2 block:
+**Per strip — `hook`** (interrupt) → `fx_strip` (shared with the video hook
+since `v024`), per row of 2×2 blocks: first every block's mapped luma into a
+row buffer (so sharpening sees its neighbours as they were), then per block:
 
-1. average the block's 4 luma;
-2. take it through the preset's luma map (contrast, brightness; one load);
-3. add a **4×4 Bayer** ordered-dither offset (±32), clamp to 0–255;
+1. average the block's 4 luma, through the look's luma map (contrast,
+   brightness, the Game Boy tone; one load) — the first pass;
+2. sharpen it against its row neighbours, if the look sharpens;
+3. add the look's **4×4 ordered-dither offset** (±32 for a palette; one
+   shade's width for a ramp), clamp to 0–255;
 4. read the block's U, V;
 5. one table read at `((yq·33 + uq)·33 + vq)`, `q = (x + 4) >> 3`
    (multiplying by 33 is `x + (x << 5)`);
 6. paint the whole block that palette colour (Y to all four luma, U, V to the
    pair).
 
+With 4×4 pixels the same steps run per 4×4 block (`fx4`, video cave).
+`tools/sim_look.py` is the exact reference of all of it.
+
 That's **61 instructions per block** (66 until `v023`, which computed
-contrast and brightness per block), against 147 for the v1 6-colour search
+contrast and brightness per block; the same in `v024` without sharpening),
+against 147 for the v1 6-colour search
 (both counted in the emulator, v1 on the v008 backup). Per-block is the natural
 unit in 4:2:0 (one chroma pair per block).
 
@@ -720,14 +739,16 @@ the ones that clearly differ: `kodak_elite_100_xpro`, `polaroid_669`,
 A preset is a **match palette** (each block gets its nearest colour, as
 before) and what the block is painted with: the same colour **as a film
 simulation renders it** (a G'MIC HaldCLUT applied to the palette's colours),
-or for BW a set of greys. Since `v015` there are three, and the center button
+or for BW a set of greys. Since `v015` there are three, since `v024` four (GBC,
+the [Game Boy Camera look](#game-boy-camera-settings)), and the center button
 picks one (see [Preset mode](#preset-mode-center-button-and-display)):
 
 | Code | Match palette (`palettes.py MATCH`) | Painted with |
 |---|---|---|
 | `EP6` | `E`: endesga32 + 3 greens (OKLCH L 0.40/0.53/0.67, C 0.09, hue 140; foliage was landing on its browns), minus `#FF0044`, `#FEE761`, `#2CE8F5` (used 0.0% on the plain photos): 32 colours | `polaroid_690` |
-| `6FP` | `6`: riso6, overprint-expanded to 16 instead of 10 (calmer) | `fuji_provia_100_generic` |
-| `BW` | `B`: greys at Y 0, 80, 128, 176, 255 | greys at Y 0, 64, 128, 191, 255 |
+| `6FP` | `6`: riso6 and 5 of its mixes, 11 colours (`SIX_FP`, chosen in the editor; until `v023` riso6 overprint-expanded to 16); contrast +7, brightness −4, sharpen 16% | `fuji_provia_100_generic` |
+| `BW` | `B`: greys at Y 0, 80, 128, 176, 255; contrast +6, sharpen 23% | greys at Y 0, 64, 128, 191, 255 |
+| `GBC` | `G`: the fork's Game Boy grey-greens (`GB_SHADES`); a ramp, the Game Boy tone, 4×4 pixels, sharpen 50% | the same |
 
 **BW.** Five greys one Bayer swing (−32..+28 on luma) apart, so every tone
 dithers between two neighbours: the dithered greyscale look. It matches
@@ -1100,6 +1121,46 @@ the 16 KB power-on slot holds only 0.37 s.
 
 ## Look knobs (contrast / brightness)
 
+### Game Boy Camera settings
+
+Since `v024` each look can use the parts of the Game Boy Camera (from Donald
+Sayers' fork, whose Game Boy mode follows PIXELBOY's `gbcam.c`, gb-photo by
+Toxa and the Pan Docs), each on its own (`palettes.py` config, the editor's
+panel; `PRESET_FX` flags and sharpening weight):
+
+- **Ramp** (`ramp`): pick by brightness alone. The build sorts the look's
+  colours dark to light (by match luma), and `lut_fill` fills the table with
+  even shades of luma whatever U and V are: bin `q` gets shade
+  `min(n − 1, 8qn >> 8)`. The dither offsets become one shade's width,
+  `(2B + 1)·8/n − 128/n`, so a ramp of any length dithers between neighbours.
+  Best with colours of one hue: mixed hues of about the same brightness end up
+  side by side.
+- **Tone** (`gbTone`, with a ramp): the Game Boy's fixed 4× exposure to the
+  MAC-GBD code, `128 + (t − 32)/2`, and gb-photo's shade boundaries
+  (`0x89 0x92 0xA2 0xD2`: narrow in the darks, wide in the lights), stretched
+  over the ramp's steps: `(256·(2(kw + d)(n − 1) + 3w) + 3wn) / 6wn`. Folded
+  into the luma map by `gb_tone_fill` (preset data cave, with a small `udiv`),
+  so it costs nothing per pixel. With 4 shades it matches the fork's exact
+  maths on 93–96% of the pixels of the sample photos (the rest are single dots
+  where the thresholds round differently) with the Game Boy's own dither
+  pattern; ours is its mirror image.
+- **Pixels** (`pixel`: 2 or 4): 4×4 blocks (`fx4`), 128×112 of them at
+  512×448. Its luma is read as words, two bytes per 16-bit lane (as the fork
+  does), U and V are the mean of its 4 pairs, and it's painted as words; the
+  strip must be word aligned (it is, as the fork found).
+- **Sharpen** (`sharpen`, 0–100%; 50% = the Game Boy's): horizontal,
+  `y + ((2y − left − right)·w >> 7)`, `w = (pct·128 + 50)/100`, on the mapped
+  luma of the row (its ends repeat), before the dither and its clamp.
+
+Time per 64-row strip at 704 wide (emulator): 0.68 M instructions without
+sharpening (as `v023`), 0.76 M with (video: 46% and 52% of the frame time),
+0.30–0.32 M with 4×4 pixels (20–22%). Checked: `emu_cave.py` and
+`emu_video.py` compare every block, photo and video, at every width, with
+`tools/sim_look.py` (a config using every setting: 0.00% differing);
+`look_check` compares the editor's preview (`sim.js lookBlocks`) with it on
+random strips and looks; `editor_check.sh` the editor's builds with
+`build.sh`'s.
+
 ### Contrast and brightness per preset
 
 Each preset has a contrast and a brightness (`palettes.py`, the editor's
@@ -1119,8 +1180,8 @@ hooks do one load per block instead of the multiply and adds of the old
 assemble-time `CONTRAST`/`BRIGHT` knobs (gone since `v023`): 5 instructions per
 block fewer, ~7% of the hook. The clamp now comes before the Bayer offset, so
 a block pushed past white stays plain white instead of dithering back down;
-with contrast and brightness at 0 nothing changes. `sim_palette.py`,
-`sim.js` and the emulator checks do the same. The normal mode has neither (no
+with contrast and brightness at 0 nothing changes. `sim_look.py` (the exact
+reference), `sim.js` and the emulator checks do the same. The normal mode has neither (no
 effect at all).
 
 ## UI graphics (GPZP, logos, and the OSD overlay)

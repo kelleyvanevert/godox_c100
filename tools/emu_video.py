@@ -29,7 +29,9 @@ from unicorn.arm_const import *
 import emu_cave
 from emu_cave import FW, APP, CACHE_INV, CACHE_CLEAN, MALLOC, TICK, ROWS, pack, symbols, unpack, differing
 from palettes import LUT, SIZES, WY, config
-from sim_palette import add_tag, match, prepare
+from emu_cave import planes
+from sim_look import look_blocks
+from sim_palette import add_tag, prepare
 
 RESUME = 0x18d18
 VENC, STRIP, HEAP, STACK = 0x131490, 0x3e9a00, 0x800000, 0xf00000   # STRIP: a pool buffer, untagged
@@ -86,13 +88,16 @@ def main():
     worst = 0
     for aspect, (_, (W, H)) in SIZES.items():
         emu_cave.W = W                                    # pack/unpack/differing use it
-        print(f'-- {aspect} video, {W}x{H}')
-        per_strip = run_width(photo, W, timing, psym, vsym, pre, tags)
-        worst = max(worst, per_strip[0])
         strips = math.ceil(H / ROWS)
-        ms = strips * per_strip[1] / 310e3
-        print(f'   hook: {per_strip[1] / 1e6:.2f} M instructions per strip, x {strips} strips = '
-              f'~{ms:.1f} ms per frame, {100 * ms / 33.3:.0f}% of 33.3 ms')
+        # rnd (a new look per recording), then each look on its own (its time per frame)
+        for mode in [len(pre)] + (list(range(len(pre))) if aspect == next(iter(SIZES)) else []):
+            name = 'rnd' if mode == len(pre) else pre[mode]['tag']
+            print(f'-- {aspect} video, {W}x{H}, {name}')
+            per_strip = run_width(photo, W, timing, psym, vsym, pre, tags, mode)
+            worst = max(worst, per_strip[0])
+            ms = strips * per_strip[1] / 310e3
+            print(f'   hook: {per_strip[1] / 1e6:.2f} M instructions per strip, x {strips} strips = '
+                  f'~{ms:.1f} ms per frame, {100 * ms / 33.3:.0f}% of 33.3 ms')
     # a width that isn't one of ours (stock full-size video): untouched
     emu_cave.W = 640
     uc, calls, _ = machine(1920)
@@ -105,12 +110,12 @@ def main():
     sys.exit(0 if worst == 0 and untouched else 1)
 
 
-def run_width(photo, W, timing, psym, vsym, pre, tags):
+def run_width(photo, W, timing, psym, vsym, pre, tags, mode):
     """(worst % differing, most instructions per strip) at one width."""
     STRIDE = W * 3 // 2
     src = prepare(photo, W)
     uc, calls, count = machine(W)
-    uc.mem_write(0x132160 + 0xf1, bytes([len(pre)]))   # mode byte = rnd: a new preset per recording
+    uc.mem_write(0x132160 + 0xf1, bytes([mode]))      # the mode byte: a look, or rnd (a new look per recording)
     worst, last_idx, most = 0, None, 0
     #        label           tick  timestamp  photo row  tag expected
     steps = (('new recording', 1000, 0x100, 0, True), ('next strip', 1008, 0x100, 64, False),
@@ -127,7 +132,7 @@ def run_width(photo, W, timing, psym, vsym, pre, tags):
         p = pre[idx]
         tag, P, D = p['tag'], [tuple(c) for c in p['match']], [tuple(c) for c in p['paint']]
         Y, UV = unpack(bytes(uc.mem_read(STRIP, STRIDE * ROWS)))
-        ref = match(crop, P, wy=WY, lut=LUT, contrast=100 + p.get('contrast', 0), bright=p.get('brightness', 0))
+        ref = look_blocks(*planes(np.asarray(crop.convert('YCbCr'))), p)
         if tagged and tags:
             add_tag(ref, tag, D)
         bar = np.zeros(ref.shape, bool)
@@ -136,7 +141,9 @@ def run_width(photo, W, timing, psym, vsym, pre, tags):
             assert (Y[:4, :256] == 16).all() and (UV[:2, :128] == 128).all(), 'timing bar wrong'
         diff = differing(Y, UV, np.array(D)[ref])[~bar].mean() * 100
         worst = max(worst, diff)
-        if label == 'new recording':
+        if mode < len(pre):
+            assert idx == mode, 'not the chosen look'
+        elif label == 'new recording':
             assert last_idx is None or idx != last_idx, 'new recording kept the preset'
         else:
             assert idx == last_idx and 'malloc' not in calls, 'table rebuilt mid-recording'

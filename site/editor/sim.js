@@ -1,13 +1,11 @@
-// The camera's effect in the browser (tools/sim_palette.py with the camera's
-// lookup table): per 2x2 block the average luma through the preset's luma map
-// (contrast, brightness) plus a 4x4 Bayer offset, the
-// block's Y, U, V looked up in a 33x33x33 table of nearest match colours,
-// painted with the paint colour at that index; then the tag, top right.
-// Preview only so far (not in the firmware yet): a ramp picked by brightness,
-// 4x4 pixels and sharpening (render's preset.shades, pixel, sharpen).
-import { cropFor, tagCells, tagColours, yuvToRgb } from "./firmware.js";
+// The camera's effect in the browser, integer for integer as the firmware
+// (tools/sim_look.py is the exact reference): per block (2x2, or 4x4) the
+// mean luma through the look's luma map (contrast, brightness, the Game Boy
+// tone), sharpened, plus its dither offset; the block's Y, U, V looked up in
+// a 33x33x33 table of nearest match colours (or for a ramp, the even shade
+// of its luma), painted with the paint colour at that index; then the tag.
+import { cropFor, ditherTable, lumaMap, sharpenWeight, tagCells, tagColours, yuvToRgb } from "./firmware.js";
 
-const BAYER = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5];
 const N = 33;
 
 // What lut_fill puts in the table: per bin centre (multiples of 8), the
@@ -53,94 +51,111 @@ export function cameraFrame(m, sizes, img) {
   return ctx.getImageData(0, 0, size[0], size[1]);
 }
 
-// frame: ImageData at camera size; returns a new ImageData. preset:
-//   paint      the paint colours
-//   ymap       firmware.js lumaMap (contrast, brightness, the Game Boy tone), the identity if left out
-//   shades     null: each block gets the nearest match colour (lut); else a ramp: the colour
-//              indices dark to light, and a block's brightness alone picks one, as that many even shades
-//   pixel      2 or 4: the blocks' size in pixels (2 if left out)
-//   sharpen    0..1: horizontal edge sharpening of the blocks' brightness (0.5 = the Game Boy's)
-//   tag        drawn top right, in 2x2 blocks whatever the pixel size
-export function render(m, frame, preset, lut) {
-  const { width: w, height: h, data } = frame;
-  const s = preset.pixel ?? 2;
+// A look on the camera's planes, as tools/sim_look.py (the exact reference;
+// tools/look_check.mjs checks this against it): Y per pixel (w x h), U, V per
+// 2x2 block (w/2 x h/2 pairs); p a preset as the firmware gets it (firmware.js
+// sortedRamp: a ramp's colours dark to light); lut = buildLut(p.match) unless a
+// ramp. Returns the colour index per 2x2 block (a 4x4 block's four alike).
+export function lookBlocks(Y, UV, w, h, p, lut) {
+  const s = p.pixel ?? 2;
+  const k = s >> 1;
   const bw = Math.floor(w / s);
   const bh = Math.floor(h / s);
-  const n = s * s;
-  const paint = preset.paint.map(yuvToRgb);
-  const shades = preset.shades;
-  const blocks = new Uint8Array(bw * bh);
-  const row = new Int16Array(bw); // a row of blocks' mapped brightness, for the sharpening
-  const us = new Uint8Array(bw);
-  const vs = new Uint8Array(bw);
+  const ymap = lumaMap(p);
+  const dither = ditherTable(p);
+  const wgt = sharpenWeight(p);
+  const n = p.match.length;
+  const out = new Uint8Array((w >> 1) * (h >> 1));
+  const row = new Int32Array(bw);
+  const us = new Int32Array(bw);
+  const vs = new Int32Array(bw);
   for (let by = 0; by < bh; by++) {
     for (let bx = 0; bx < bw; bx++) {
       let ysum = 0, usum = 0, vsum = 0;
       for (let dy = 0; dy < s; dy++)
-        for (let dx = 0; dx < s; dx++) {
-          const i = ((s * by + dy) * w + s * bx + dx) * 4;
-          const r = data[i], g = data[i + 1], b = data[i + 2];
-          ysum += 0.299 * r + 0.587 * g + 0.114 * b;
-          usum += 128 - 0.168736 * r - 0.331264 * g + 0.5 * b;
-          vsum += 128 + 0.5 * r - 0.418688 * g - 0.081312 * b;
+        for (let dx = 0; dx < s; dx++) ysum += Y[(s * by + dy) * w + s * bx + dx];
+      for (let dy = 0; dy < k; dy++)
+        for (let dx = 0; dx < k; dx++) {
+          const i = ((k * by + dy) * (w >> 1) + k * bx + dx) * 2;
+          usum += UV[i];
+          vsum += UV[i + 1];
         }
-      const y = Math.min(255, Math.floor(Math.round(ysum) / n));
-      row[bx] = preset.ymap ? preset.ymap[y] : y;
-      us[bx] = Math.max(0, Math.min(255, Math.round(usum / n)));
-      vs[bx] = Math.max(0, Math.min(255, Math.round(vsum / n)));
+      row[bx] = ymap[ysum >> (s === 2 ? 2 : 4)];
+      us[bx] = usum >> (s === 2 ? 0 : 2);
+      vs[bx] = vsum >> (s === 2 ? 0 : 2);
     }
     for (let bx = 0; bx < bw; bx++) {
       let y = row[bx];
-      if (preset.sharpen) {
-        const left = row[Math.max(bx - 1, 0)];
-        const right = row[Math.min(bx + 1, bw - 1)];
-        y = Math.max(0, Math.min(255, y + Math.trunc((2 * y - left - right) * preset.sharpen)));
-      }
-      const bayer = BAYER[(by & 3) * 4 + (bx & 3)];
-      if (shades) {
-        // even shades: 256 / count levels each, dithered across one level
-        const k = shades.length;
-        const shade = Math.floor(((y + ((bayer - 7.5) * 16) / k) * k) / 256);
-        blocks[by * bw + bx] = shades[Math.max(0, Math.min(k - 1, shade))];
-      } else {
-        y = Math.max(0, Math.min(255, y + (bayer - 8) * 4));
-        blocks[by * bw + bx] = lut[(((y + 4) >> 3) * N + ((us[bx] + 4) >> 3)) * N + ((vs[bx] + 4) >> 3)];
-      }
+      if (wgt) y += ((2 * y - row[Math.max(bx - 1, 0)] - row[Math.min(bx + 1, bw - 1)]) * wgt) >> 7;
+      y = Math.max(0, Math.min(255, y + dither[(by & 3) * 4 + (bx & 3)]));
+      const q = (y + 4) >> 3;
+      const idx = p.ramp
+        ? Math.min(n - 1, (8 * q * n) >> 8)
+        : lut[(q * N + ((us[bx] + 4) >> 3)) * N + ((vs[bx] + 4) >> 3)];
+      for (let dy = 0; dy < k; dy++)
+        for (let dx = 0; dx < k; dx++) out[(k * by + dy) * (w >> 1) + k * bx + dx] = idx;
     }
   }
+  return out;
+}
 
+// The camera's planes of a frame (an ImageData): Y per pixel, U and V per 2x2
+// block (the mean of its pixels'), JFIF YCbCr as firmware.js rgbToYuv.
+export function planes(frame) {
+  const { width: w, height: h, data } = frame;
+  const Y = new Uint8Array(w * h);
+  const UV = new Uint8Array((w >> 1) * (h >> 1) * 2);
+  for (let y = 0; y < h; y++)
+    for (let x = 0; x < w; x++) {
+      const i = (y * w + x) * 4;
+      Y[y * w + x] = Math.max(0, Math.min(255, Math.round(0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2])));
+    }
+  for (let by = 0; by < h >> 1; by++)
+    for (let bx = 0; bx < w >> 1; bx++) {
+      let us = 0, vs = 0;
+      for (const [dx, dy] of [[0, 0], [1, 0], [0, 1], [1, 1]]) {
+        const i = ((2 * by + dy) * w + 2 * bx + dx) * 4;
+        const [r, g, b] = [data[i], data[i + 1], data[i + 2]];
+        us += 128 - 0.168736 * r - 0.331264 * g + 0.5 * b;
+        vs += 128 + 0.5 * r - 0.418688 * g - 0.081312 * b;
+      }
+      const o = (by * (w >> 1) + bx) * 2;
+      UV[o] = Math.max(0, Math.min(255, Math.round(us / 4)));
+      UV[o + 1] = Math.max(0, Math.min(255, Math.round(vs / 4)));
+    }
+  return { Y, UV };
+}
+
+// frame: ImageData at camera size; p: the look as the firmware gets it, plus
+// its tag ("" for none); returns a new ImageData.
+export function render(m, frame, p, lut) {
+  const { width: w, height: h } = frame;
+  const { Y, UV } = planes(frame);
+  const blocks = lookBlocks(Y, UV, w, h, p, lut);
+  const bw = w >> 1;
+  const paint = p.paint.map(yuvToRgb);
+  if (p.tag) {
+    const [dark, light] = tagColours(p.paint);
+    const cells = tagCells(m, p.tag);
+    const t = m.tag.scale;
+    const c0 = bw - m.tag.right - cells[0].length * t;
+    cells.forEach((cellRow, r) =>
+      cellRow.forEach((v, c) => {
+        if (!v) return;
+        for (let yy = 0; yy < t; yy++)
+          for (let xx = 0; xx < t; xx++) blocks[(m.tag.top + r * t + yy) * bw + c0 + c * t + xx] = v === 1 ? dark : light;
+      }),
+    );
+  }
   const out = new ImageData(w, h);
   for (let y = 0; y < h; y++)
     for (let x = 0; x < w; x++) {
-      const by = Math.min(Math.floor(y / s), bh - 1);
-      const bx = Math.min(Math.floor(x / s), bw - 1);
-      const [r, g, b] = paint[blocks[by * bw + bx]];
+      const [r, g, b] = paint[blocks[Math.min(y >> 1, (h >> 1) - 1) * bw + Math.min(x >> 1, bw - 1)]];
       const i = (y * w + x) * 4;
       out.data[i] = r;
       out.data[i + 1] = g;
       out.data[i + 2] = b;
       out.data[i + 3] = 255;
     }
-
-  if (preset.tag) {
-    const [dark, light] = tagColours(preset.paint).map((i) => paint[i]);
-    const cells = tagCells(m, preset.tag);
-    const t = 2 * m.tag.scale; // pixels per tag cell
-    const x0 = 2 * ((w >> 1) - m.tag.right) - cells[0].length * t;
-    const y0 = 2 * m.tag.top;
-    cells.forEach((cellRow, r) =>
-      cellRow.forEach((v, c) => {
-        if (!v) return;
-        const [cr, cg, cb] = v === 1 ? dark : light;
-        for (let yy = 0; yy < t; yy++)
-          for (let xx = 0; xx < t; xx++) {
-            const i = ((y0 + r * t + yy) * w + x0 + c * t + xx) * 4;
-            out.data[i] = cr;
-            out.data[i + 1] = cg;
-            out.data[i + 2] = cb;
-          }
-      }),
-    );
-  }
   return out;
 }

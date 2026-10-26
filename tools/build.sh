@@ -55,7 +55,7 @@ fi
 asm() {  # asm NAME START END [extra llvm-mc args, e.g. --defsym=X=1]
     name=$1 start=$2 end=$3; shift 3
     $LLVM/llvm-mc -triple=armv5te-none-eabi \
-        -I build/obj "$@" -filetype=obj "tools/patches/$name.s" -o "build/obj/$name.o"
+        -I build/obj -I tools/patches "$@" -filetype=obj "tools/patches/$name.s" -o "build/obj/$name.o"
     set -- "$name" "$start" "$end"
     if $LLVM/llvm-readobj -r "build/obj/$1.o" | grep -q R_ARM; then
         echo "$1: unresolved relocation (use 'mov lr, pc; b X' instead of 'bl X')" >&2; exit 1
@@ -87,7 +87,8 @@ PDATA=$(asm preset_data 0xbbc00 0xbc400)
 CAVE=$(asm photo_cave 0xbab6c 0xbb340 \
     --defsym=MATCH_ADDR=$(nmsym preset_data MATCH_PALETTES) --defsym=PMATCH_ADDR=$(nmsym preset_data PRESET_MATCH) \
     --defsym=DPTRS_ADDR=$(nmsym preset_data DISPLAY_PTRS) --defsym=TAGS_ADDR=$(nmsym preset_data TAGS) \
-    --defsym=FX_ADDR=$(nmsym preset_data PRESET_FX))  # dead FUN_000bab6c
+    --defsym=FX_ADDR=$(nmsym preset_data PRESET_FX) \
+    --defsym=GBTONE_ADDR=$(nmsym preset_data gb_tone_fill) --defsym=UDIV_ADDR=$(nmsym preset_data udiv))  # dead FUN_000bab6c
 sym() {  # address of a label in the assembled photo cave
     nmsym photo_cave "$1"
 }
@@ -103,7 +104,7 @@ VIDTIMING=${VIDTIMING:-0}
 VFX_PATCHES=""
 if [ "$VIDFX" = "1" ]; then
     VT=""; [ "$VIDTIMING" = "1" ] && VT="--defsym=VIDTIMING=1"
-    VCAVE=$(asm video_cave 0xbb774 0xbbc00 --defsym=LUT_FILL_ADDR=$(sym lut_fill) --defsym=PVARS_ADDR=$(sym VARS) --defsym=DRAW_TAG_ADDR=$(sym draw_tag) $VT)
+    VCAVE=$(asm video_cave 0xbb774 0xbbc00 --defsym=LUT_FILL_ADDR=$(sym lut_fill) --defsym=PVARS_ADDR=$(sym VARS) --defsym=DRAW_TAG_ADDR=$(sym draw_tag) --defsym=FX_STRIP_ADDR=$(sym fx_strip) $VT)
     VHOOK=$(asm vhook_jump 0x18d14 0x18d18 --defsym=HOOK=$($LLVM/llvm-nm build/obj/video_cave.o | awk '$3 == "vhook" { print "0x" $1 }'))
     VFX_PATCHES="$VCAVE $VHOOK"
 fi

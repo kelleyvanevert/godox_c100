@@ -2,11 +2,15 @@
 // writing a config into it, byte for byte what tools/build.sh would make from
 // the same config (tools/editor_check.sh checks that). No DOM: runs in Node too.
 //
-// A config is { presets: [{ tag, match, paint, contrast, brightness, lcd }], rnd, normal, sounds, tags, sizes }:
+// A config is { presets: [{ tag, match, paint, contrast, brightness, ramp, gbTone, pixel, sharpen, lcd }],
+//   rnd, normal, sounds, tags, sizes }:
 //   match, paint  [[Y, U, V], ...], index for index: blocks snap to a match
 //                 colour and get painted with the paint colour at its index
 //   contrast      percent added around mid-grey before matching (optional, 0)
 //   brightness    luma levels added before matching (optional, 0)
+//   ramp          pick by brightness only: the colours as a ramp of even shades, dark to
+//                 light (sorted so here); gbTone: with a ramp, the Game Boy Camera's tone
+//   pixel         2 or 4: the blocks' size; sharpen: 0..100, horizontal (optional)
 //   lcd           the lit segments ("abcdefg") of each of the display's 3 cells
 //   rnd           the center button also offers a random preset per photo
 //   normal        and then the normal mode: no effect, photos and video as the
@@ -94,45 +98,65 @@ function tagBytes(m, tag, paint) {
   return [...packed, 3 * dark, 3 * light];
 }
 
-// ---- contrast and brightness (palettes.py fx_bytes, luma_map) ----
+// ---- the look's settings (palettes.py luma_map, dither_table, ramp_shade, fx_bytes) ----
+// tools/sim_look.py is the exact reference of what the camera does with them;
+// sim.js repeats it.
 
 const contrastFix = (p) => Math.floor(((100 + (p.contrast ?? 0)) * 128) / 100);
+export const sharpenWeight = (p) => Math.floor(((p.sharpen ?? 0) * 128 + 50) / 100);
+const FX_RAMP = 1, FX_GBTONE = 2, FX_PIX4 = 4;
+const GB_RANGE = [0x89, 0x92, 0xa2, 0xd2];
 
-// What the camera does to a block's luma before the Bayer offset and the
-// table (lut_fill's luma map): contrast around mid-grey, brightness, clamped.
-// With p.shades and p.gbTone (preview only so far), then the Game Boy tone.
+// The Game Boy Camera's tone for a ramp of n shades (palettes.py gb_tone): its
+// fixed 4x exposure to the MAC-GBD code, 128 + (t - 32) / 2 toward zero, then the
+// code's place among GB_RANGE as k whole steps + d / w of the next (w its width),
+// stretched over the ramp's n - 1 steps and put in the middle of its shade, rounded.
+function gbTone(t, n) {
+  const code = 128 + Math.trunc((t - 32) / 2);
+  let [k, d, w] = [0, 0, 1];
+  if (code >= GB_RANGE[3]) [k, d, w] = [2, 1, 1];
+  else if (code >= GB_RANGE[0]) {
+    k = [2, 1, 0].find((i) => code >= GB_RANGE[i]);
+    [d, w] = [code - GB_RANGE[k], GB_RANGE[k + 1] - GB_RANGE[k]];
+  }
+  return Math.floor((256 * (2 * (k * w + d) * (n - 1) + 3 * w) + 3 * w * n) / (6 * w * n));
+}
+
+// What lut_fill puts in the look's luma map: contrast around mid-grey,
+// brightness, clamped; then with a ramp and p.gbTone the Game Boy tone.
 export function lumaMap(p) {
   const fix = contrastFix(p);
   const b = p.brightness ?? 0;
-  const tone = p.shades && p.gbTone ? gbTone(p.colours.length) : null;
+  const tone = p.ramp && p.gbTone;
   return Uint8Array.from({ length: 256 }, (_, y) => {
     const t = Math.max(0, Math.min(255, (((y - 128) * fix) >> 7) + 128 + b));
-    return tone ? tone(t) : t;
+    return tone ? gbTone(t, p.match.length) : t;
   });
 }
 
-// The Game Boy Camera's tone, for a ramp of n even shades: its fixed 4x
-// exposure to the MAC-GBD code, 128 + (4Y - 128) / 8 toward zero, then the
-// code's place among gb-photo's 4 shade boundaries (0x89 0x92 0xA2 0xD2: narrow
-// in the darks, wide in the lights) as u = 0..3, stretched over the ramp's
-// n - 1 steps, v = u (n - 1) / 3, at (v + 1/2) of a shade's 256 / n levels, so the
-// shades dither between shade k and k + 1 as the camera's thresholds do (exactly
-// its own with 4 shades).
-const GB_RANGE = [0x89, 0x92, 0xa2, 0xd2];
-function gbTone(n) {
-  return (y) => {
-    const code = 128 + Math.trunc((4 * y - 128) / 8);
-    let u = 0;
-    if (code >= GB_RANGE[3]) u = 3;
-    else if (code >= GB_RANGE[0]) {
-      const k = GB_RANGE.findLastIndex((r) => code >= r);
-      u = k + (code - GB_RANGE[k]) / (GB_RANGE[k + 1] - GB_RANGE[k]);
-    }
-    return Math.max(0, Math.min(255, Math.round(((u * (n - 1)) / 3 + 0.5) * (256 / n))));
-  };
+const BAYER = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5];
+
+// The 16 luma offsets by (row & 3) * 4 + (col & 3): the Bayer swing of +-32, or
+// for a ramp of n one shade's width.
+export function ditherTable(p) {
+  const n = p.match.length;
+  return BAYER.map((b) => (p.ramp ? Math.floor(((2 * b + 1) * 8) / n) - Math.floor(128 / n) : (b - 8) * 4));
 }
 
-const fxBytes = (p) => [0, contrastFix(p), (p.brightness ?? 0) & 0xff, 0];
+// A ramp's colours sorted dark to light by match luma (stably), as the camera
+// wants them: its shade k is colour k.
+export function sortedRamp(p) {
+  if (!p.ramp) return p;
+  const order = p.match.map((_, i) => i).sort((a, b) => p.match[a][0] - p.match[b][0] || a - b);
+  return { ...p, match: order.map((i) => p.match[i]), paint: order.map((i) => p.paint[i]) };
+}
+
+const fxBytes = (p) => [
+  (p.ramp ? FX_RAMP : 0) | (p.ramp && p.gbTone ? FX_GBTONE : 0) | (p.pixel === 4 ? FX_PIX4 : 0),
+  contrastFix(p),
+  (p.brightness ?? 0) & 0xff,
+  sharpenWeight(p),
+];
 
 // ---- the see-through display (palettes.py lcd_nibbles) ----
 
@@ -194,11 +218,12 @@ export function configErrors(m, cfg) {
   const seen = new Set();
   for (const p of cfg.presets) {
     const name = p.tag || "(no tag)";
-    for (const k of ["contrast", "brightness"]) {
+    for (const k of ["contrast", "brightness", "sharpen"]) {
       const [lo, hi] = m.fx[k];
       const v = p[k] ?? 0;
       if (!Number.isInteger(v) || v < lo || v > hi) errors.push(`${name}: ${k} from ${lo} to ${hi}.`);
     }
+    if (![2, 4, undefined].includes(p.pixel)) errors.push(`${name}: pixels 2 or 4.`);
     // without tags on the photos, they needn't be valid
     if (cfg.tags !== false) {
       if (!p.tag) errors.push("Every look needs a tag.");
@@ -299,6 +324,7 @@ export function buildFirmware(template, m, cfg, sounds) {
   const at = (addr) => m.appOffset + addr; // RAM address -> file offset
   const { pd } = m;
   const n = cfg.presets.length;
+  cfg = { ...cfg, presets: cfg.presets.map(sortedRamp) };
 
   fw.fill(0, at(pd.MATCH), at(pd.END));
   let o = at(pd.MATCH);
