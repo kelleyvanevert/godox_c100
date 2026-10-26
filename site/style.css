@@ -304,6 +304,17 @@ footer p {
   padding: 6px 10px;
 }
 
+footer .made {
+  display: block;
+  font-size: 20px;
+  margin-bottom: 6px;
+}
+
+footer .credits {
+  text-transform: none;
+  font: 14px/1.45 var(--sans);
+}
+
 dialog {
   padding: 0;
   border: 2px solid var(--ink);
@@ -793,6 +804,14 @@ dialog button {
 
 .ed-problem:empty {
   display: none;
+}
+
+.ed-hint {
+  flex-basis: 100%;
+  padding-left: 82px;
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--muted);
 }
 
 /* contrast and brightness */

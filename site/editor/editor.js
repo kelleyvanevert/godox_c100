@@ -13,9 +13,15 @@ const PHOTOS = [
 ].map((f) => `editor/photos/${f}.jpg`);
 const noPhotos = () => PHOTOS.map(() => null);
 const DEFAULT_SLOTS = [
-  "EP6", "6FP", "BW", "GBC (5)",
+  "EP6", "6FP", "BW", "GBC (4)",
   "db16 (16)", "sweetie16 (16)", "riso6 (6)", "nes (32)",
 ];
+const DEFAULT_ON = 4; // EP6, 6FP, BW and GBC
+// GBC's colours before it became the Game Boy Camera look (with white; then the 4 greens)
+const OLD_GBC = [
+  ["#071820", "#336856", "#89c06f", "#dff8d0", "#ffffff"],
+  ["#071820", "#336856", "#89c06f", "#dff8d0"],
+].map((hexes) => hexes.map((h) => yuvToHex(hexToYuv(h))).join());
 const SOUND_PRESETS = { stock: "Stock", mario: "Super Mario" };
 const SOUND_LABELS = { shutter: "Shutter", poweron: "Power-on" };
 const SEGS = "abcdefg";
@@ -62,17 +68,27 @@ function slotFrom(item, on) {
     colours: item.colours.map((c) => [...c]),
     curve: !!item.curve,
     film: item.film,
-    contrast: 0,
-    brightness: 0,
+    contrast: item.contrast ?? 0,
+    brightness: item.brightness ?? 0,
+    ...gbBits(item),
     sel: 0,
   };
 }
+
+// The Game Boy Camera's parts, each on its own (preview only so far): the
+// colours as a ramp picked by brightness alone (shades), its tone (with a ramp
+// only), 4x4 pixels, sharpening.
+// A library preset may set them; otherwise they're off.
+function gbBits(item) {
+  return { shades: !!item.shades, gbTone: !!item.gbTone, pixel: item.pixel ?? 2, sharpen: item.sharpen ?? 0 };
+}
+const usesGbBits = (p) => p.shades || p.pixel !== 2 || p.sharpen > 0;
 
 const defaultSizes = () => structuredClone(m.sizes);
 
 function defaultState() {
   const slots = DEFAULT_SLOTS.map((name, i) =>
-    slotFrom(library.palettes.find((l) => l.name === name) ?? library.palettes[i], i < 3),
+    slotFrom(library.palettes.find((l) => l.name === name) ?? library.palettes[i], i < DEFAULT_ON),
   );
   return {
     slots,
@@ -96,6 +112,11 @@ function load() {
         p.curve = !!p.curve;
         p.contrast ??= 0;
         p.brightness ??= 0;
+        if (p.pixel === undefined) Object.assign(p, gbBits({}));
+        // GBC became the Game Boy Camera look (the fork's 4 shades, its settings): an unedited old GBC follows
+        const gbc = library.palettes.find((l) => l.tag === "GBC");
+        if (gbc && OLD_GBC.includes(p.colours.map(yuvToHex).join()))
+          Object.assign(p, { name: gbc.name, colours: gbc.colours.map((c) => [...c]), ...gbBits(gbc), sel: 0 });
       }
       // the preview photos changed: own photos don't carry over
       if (saved.photos?.length !== PHOTOS.length) saved.photos = noPhotos();
@@ -489,7 +510,10 @@ function lookNote(p, f) {
   return (
     (p.curve ? " &middot; S-curve" : "") + (f ? ` &middot; ${esc(f.name)}` : "") +
     (p.contrast ? ` &middot; contrast ${signed(p.contrast)}%` : "") +
-    (p.brightness ? ` &middot; brightness ${signed(p.brightness)}` : "")
+    (p.brightness ? ` &middot; brightness ${signed(p.brightness)}` : "") +
+    (p.shades ? " &middot; ramp" : "") + (p.shades && p.gbTone ? " &middot; Game Boy tone" : "") +
+    (p.pixel !== 2 ? ` &middot; ${p.pixel}&times;${p.pixel} pixels` : "") +
+    (p.sharpen ? ` &middot; sharpen ${p.sharpen}%` : "")
   );
 }
 
@@ -504,11 +528,12 @@ function tagProblem(p) {
 }
 
 // Contrast and brightness: a slider each, applied to the luma before matching.
-const FX_LABELS = { contrast: "Contrast", brightness: "Brightness" };
-const fxText = (k, v) => signed(v) + (k === "contrast" ? "%" : "");
+const FX_LABELS = { contrast: "Contrast", brightness: "Brightness", sharpen: "Sharpen" };
+const fxText = (k, v) => (k === "sharpen" ? `${v}%` : signed(v) + (k === "contrast" ? "%" : ""));
+const fxRange = (k) => (k === "sharpen" ? [0, 100] : m.fx[k]);
 
 function fxRow(p, k) {
-  const [lo, hi] = m.fx[k];
+  const [lo, hi] = fxRange(k);
   return `
     <div class="ed-row ed-fx" data-k="${k}">
       <label for="ed-${k}">${FX_LABELS[k]}</label>
@@ -542,6 +567,29 @@ function renderPalette() {
     </div>
     ${fxRow(p, "contrast")}
     ${fxRow(p, "brightness")}
+    <div class="ed-gb">
+      <p class="note">From the Game Boy Camera. Preview only for now: the download doesn't include these yet.</p>
+      <div class="ed-row">
+        <span class="label">Ramp</span>
+        <label class="ed-check"><input type="checkbox" id="ed-shades" ${p.shades ? "checked" : ""} />
+          by brightness only, dark to light</label>
+        <span class="ed-hint">Best with colours of one hue (greys, greens, sepia): mixed hues of about the same
+          brightness end up side by side.</span>
+      </div>
+      <div class="ed-row">
+        <span class="label">Tone</span>
+        <label class="ed-check ${p.shades ? "" : "dim"}" title="${p.shades ? "" : "Needs a ramp"}">
+          <input type="checkbox" id="ed-gbtone" ${p.gbTone ? "checked" : ""} ${p.shades ? "" : "disabled"} />
+          Game Boy exposure and shade spacing</label>
+      </div>
+      <div class="ed-row">
+        <label for="ed-pixel">Pixels</label>
+        <select id="ed-pixel">
+          ${[2, 4].map((n) => `<option value="${n}" ${p.pixel === n ? "selected" : ""}>${n}&times;${n}</option>`).join("")}
+        </select>
+      </div>
+      ${fxRow(p, "sharpen")}
+    </div>
     <div class="ed-row ed-tagrow" ${state.tags ? "" : "hidden"}>
       <label for="ed-tag">Tag</label>
       <input id="ed-tag" value="${esc(p.tag)}" maxlength="3" autocomplete="off" spellcheck="false" />
@@ -840,7 +888,7 @@ function paletteChange(e) {
   if (e.target.id === "ed-from" && e.target.value !== "") {
     const item = library.palettes[+e.target.value];
     const fresh = slotFrom(item, p.on);
-    Object.assign(p, { name: item.name, colours: fresh.colours, curve: fresh.curve, film: item.film, sel: 0 });
+    Object.assign(p, { name: item.name, colours: fresh.colours, curve: fresh.curve, film: item.film, contrast: fresh.contrast, brightness: fresh.brightness, ...gbBits(item), sel: 0 });
     if (!enabled().some((q) => q !== p && q.tag === item.tag)) Object.assign(p, { tag: item.tag, lcd: fresh.lcd, lcdAuto: fresh.lcdAuto });
     track("choose_preset", { preset: item.name });
     return changed({ palette: true });
@@ -855,6 +903,17 @@ function paletteChange(e) {
     }
     renderTagShown();
     renderStrips();
+    return changed({ list: false });
+  }
+  if (["ed-shades", "ed-gbtone", "ed-pixel"].includes(e.target.id)) {
+    if (e.target.id === "ed-pixel") p.pixel = +e.target.value;
+    else p[e.target.id === "ed-shades" ? "shades" : "gbTone"] = e.target.checked;
+    track(`change_${e.target.id.slice(3)}`, { value: e.target.type === "checkbox" ? e.target.checked : +e.target.value });
+    // the tone needs a ramp: its checkbox follows
+    const tone = $("#ed-gbtone");
+    tone.disabled = !p.shades;
+    tone.closest("label").classList.toggle("dim", !p.shades);
+    tone.closest("label").title = p.shades ? "" : "Needs a ramp";
     return changed({ list: false });
   }
   if (e.target.id === "ed-lcd-auto") {
@@ -946,8 +1005,10 @@ async function renderPreview() {
   const paint = await paintOf(p);
   if (current() !== p) return;
   const drawable = state.tags && [...p.tag].every((ch) => m.font[ch]) && tagWidth(m, p.tag) <= m.tag.cols;
-  const preset = { tag: drawable ? p.tag : "", match: p.colours, paint, ymap: lumaMap(p) };
-  const lut = buildLut(preset.match, m.wy);
+  // even shades: the colour indices by brightness, dark to light
+  const shades = p.shades ? p.colours.map((c, i) => [c[0], i]).sort((a, b) => a[0] - b[0]).map(([, i]) => i) : null;
+  const preset = { tag: drawable ? p.tag : "", match: p.colours, paint, ymap: lumaMap(p), shades, pixel: p.pixel, sharpen: p.sharpen / 100 };
+  const lut = shades ? null : buildLut(preset.match, m.wy);
   document.querySelectorAll(".ed-photo canvas").forEach((canvas, i) => {
     const frame = frames[i];
     if (!frame) return;
@@ -1235,7 +1296,8 @@ function renderDownload() {
   $("#ed-summary").textContent =
     `${on.length} look${on.length === 1 ? "" : "s"} (${on.map((p) => (state.tags ? p.tag || "?" : p.name)).join(", ")})` +
     `${rnd ? " + rnd" : ""}${state.normal ? " + nor" : ""} · ${state.tags ? "tagged" : "no tags"}${sized ? " · own sizes" : ""}` +
-    ` · ${state.sounds.on ? "sounds on" : "silent"}`;
+    ` · ${state.sounds.on ? "sounds on" : "silent"}` +
+    (on.some(usesGbBits) ? " · the Game Boy settings are preview only, not in the download yet" : "");
   $("#ed-errors").innerHTML = errors.map((e) => `<li>${esc(e)}</li>`).join("");
   $("#ed-download").disabled = errors.length > 0;
 }

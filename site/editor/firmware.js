@@ -100,10 +100,36 @@ const contrastFix = (p) => Math.floor(((100 + (p.contrast ?? 0)) * 128) / 100);
 
 // What the camera does to a block's luma before the Bayer offset and the
 // table (lut_fill's luma map): contrast around mid-grey, brightness, clamped.
+// With p.shades and p.gbTone (preview only so far), then the Game Boy tone.
 export function lumaMap(p) {
   const fix = contrastFix(p);
   const b = p.brightness ?? 0;
-  return Uint8Array.from({ length: 256 }, (_, y) => Math.max(0, Math.min(255, (((y - 128) * fix) >> 7) + 128 + b)));
+  const tone = p.shades && p.gbTone ? gbTone(p.colours.length) : null;
+  return Uint8Array.from({ length: 256 }, (_, y) => {
+    const t = Math.max(0, Math.min(255, (((y - 128) * fix) >> 7) + 128 + b));
+    return tone ? tone(t) : t;
+  });
+}
+
+// The Game Boy Camera's tone, for a ramp of n even shades: its fixed 4x
+// exposure to the MAC-GBD code, 128 + (4Y - 128) / 8 toward zero, then the
+// code's place among gb-photo's 4 shade boundaries (0x89 0x92 0xA2 0xD2: narrow
+// in the darks, wide in the lights) as u = 0..3, stretched over the ramp's
+// n - 1 steps, v = u (n - 1) / 3, at (v + 1/2) of a shade's 256 / n levels, so the
+// shades dither between shade k and k + 1 as the camera's thresholds do (exactly
+// its own with 4 shades).
+const GB_RANGE = [0x89, 0x92, 0xa2, 0xd2];
+function gbTone(n) {
+  return (y) => {
+    const code = 128 + Math.trunc((4 * y - 128) / 8);
+    let u = 0;
+    if (code >= GB_RANGE[3]) u = 3;
+    else if (code >= GB_RANGE[0]) {
+      const k = GB_RANGE.findLastIndex((r) => code >= r);
+      u = k + (code - GB_RANGE[k]) / (GB_RANGE[k + 1] - GB_RANGE[k]);
+    }
+    return Math.max(0, Math.min(255, Math.round(((u * (n - 1)) / 3 + 0.5) * (256 / n))));
+  };
 }
 
 const fxBytes = (p) => [0, contrastFix(p), (p.brightness ?? 0) & 0xff, 0];
