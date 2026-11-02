@@ -33,7 +33,7 @@ import palettes as P
 from gp_res import parse
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-TEMPLATE = 'v024_editor_template.bin'
+TEMPLATE = 'v025_editor_template.bin'
 SITE = os.path.join(ROOT, 'site', 'editor')
 ORIG = os.path.join(ROOT, 'c100_v1.1.6_20260929', 'GP_CARDVR_UPGRADE.BIN')
 APP = 0x10200                     # file offset of RAM address 0

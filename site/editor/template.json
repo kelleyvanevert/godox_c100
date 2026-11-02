@@ -1,7 +1,7 @@
 {
- "file": "v024_editor_template.bin",
+ "file": "v025_editor_template.bin",
  "size": 1841152,
- "sha256": "fd8c8a46509df1757d75a968e06afaa02cbd3c610682d0d3c5e20095d1c10146",
+ "sha256": "36b260c56dbe67a03fa4e34abac9849c112110e7c9f0037f5b5d30b7839f4677",
  "appOffset": 66048,
  "maxPresets": 8,
  "maxColours": 32,

@@ -1,0 +1,132 @@
+#!/usr/bin/env python3
+"""The story on the see-through display: font, cell wiring and a reference.
+
+At startup the camera shows STORY.TXT from the SD card root one line at a
+time on the display's 7 segment cells (2 under ISO, 2 under F, 3 under SS),
+as story/maker.html shows it; see tools/patches/story_cave.s. The font is
+story/font.json (STORY_FONT=file.json for another), as the maker's "Copy font
+as JSON" writes it: a character -> its segments, a..g, and a glyph over two
+cells as 'cdef|bcde'. Only ASCII characters can be in the firmware's font
+(the maker also has a few others, like the degree sign, which are skipped).
+
+  story.py asm          print story.inc for story_data.s (FONT, WIDE, WIRE)
+  story.py LINE...      print what each line lights, cell by cell
+"""
+import json, os, sys
+
+SEGMENTS = 'abcdefg'
+NCELLS = 7
+DP_AFTER = 3            # the F decimal point (09.2) follows the 3rd cell
+DP = (0x09, 2)
+FIRST, LAST = 0x20, 0x7f    # the font covers these characters
+# Segment -> (HT1621 address, COM) for each cell, left to right: ISO 1-2, F 1-2,
+# SS 1-3, found by running the firmware's digit routines (FUN_00049ea8,
+# FUN_0004a4ec, FUN_0004a074, FUN_0004a374, FUN_0004a1f0) for 0..9 in the
+# emulator, as palettes.SS_CELLS (the last three) were.
+CELLS = [
+    {'a': (0x01, 0), 'b': (0x02, 1), 'c': (0x02, 2), 'd': (0x01, 2), 'e': (0x00, 2), 'f': (0x00, 1), 'g': (0x01, 1)},
+    {'a': (0x04, 0), 'b': (0x05, 1), 'c': (0x05, 2), 'd': (0x04, 2), 'e': (0x03, 2), 'f': (0x03, 1), 'g': (0x04, 1)},
+    {'a': (0x07, 0), 'b': (0x08, 0), 'c': (0x09, 1), 'd': (0x08, 2), 'e': (0x07, 2), 'f': (0x07, 1), 'g': (0x08, 1)},
+    {'a': (0x0a, 0), 'b': (0x0b, 0), 'c': (0x0b, 1), 'd': (0x0b, 2), 'e': (0x0a, 2), 'f': (0x09, 0), 'g': (0x0a, 1)},
+    {'a': (0x0d, 0), 'b': (0x0e, 0), 'c': (0x0f, 2), 'd': (0x0e, 2), 'e': (0x0d, 2), 'f': (0x0d, 1), 'g': (0x0e, 1)},
+    {'a': (0x0f, 0), 'b': (0x10, 0), 'c': (0x11, 1), 'd': (0x11, 2), 'e': (0x10, 2), 'f': (0x0f, 1), 'g': (0x10, 1)},
+    {'a': (0x12, 0), 'b': (0x13, 0), 'c': (0x13, 1), 'd': (0x13, 2), 'e': (0x12, 2), 'f': (0x11, 0), 'g': (0x12, 1)},
+]
+NADDR = 0x15            # the story draws HT1621 addresses 0x00..0x14
+# Segments there that aren't the story's and stay as the firmware has them:
+# the 16:9 bracket (06.0) and the video icon (14.0). Everything else at
+# 0x00..0x14 (the ISO/F/SS labels and boxes, the fixed zeros, 14.1) is off.
+KEEP = {0x06: 8, 0x14: 8}
+
+
+def font_path():
+    return os.environ.get('STORY_FONT') or os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'story', 'font.json')
+
+
+def load_font(path=None):
+    """{char: [segments per cell]} for the ASCII characters of the font."""
+    font = {}
+    for ch, glyph in json.load(open(path or font_path())).items():
+        if len(ch) != 1 or not FIRST <= ord(ch) <= LAST:
+            continue
+        parts = glyph.split('|')
+        assert 1 <= len(parts) <= 2 and all(set(p) <= set(SEGMENTS) for p in parts), f'{ch!r}: bad glyph {glyph!r}'
+        font[ch] = parts
+    font.setdefault(' ', [''])
+    assert font[' '] == [''], 'the space must be blank'
+    return font
+
+
+def mask(segs):
+    return sum(1 << SEGMENTS.index(s) for s in segs)
+
+
+def tables(font):
+    """FONT (one byte per character FIRST..LAST: bit 0 = a .. bit 6 = g, bit 7
+    = a second cell), WIDE (index, second cell's mask pairs, then 0xff) and
+    WIRE (per cell and segment a..g: address << 2 | COM)."""
+    fnt, wide = [], []
+    for c in range(FIRST, LAST + 1):
+        parts = font.get(chr(c), [''])
+        fnt.append(mask(parts[0]) | (0x80 if len(parts) > 1 else 0))
+        if len(parts) > 1:
+            wide += [c - FIRST, mask(parts[1])]
+    wire = [a << 2 | com for cell in CELLS for a, com in (cell[s] for s in SEGMENTS)]
+    return fnt, wide + [0xff], wire
+
+
+def render(line, font):
+    """The nibbles for addresses 0..NADDR-1 that show `line` (the KEEP bits
+    off), as the firmware draws it and story/maker.html shows it: one
+    character per cell (two for a two-cell glyph), unknown ones blank, and
+    once a character doesn't fit the rest of the line doesn't show either; a
+    '.' right after the 3rd cell's character lights the decimal point instead.
+    Bytes outside the font's range count as spaces; '\\r' is skipped."""
+    nib = [0] * NADDR
+    n, dp, may_dp = 0, False, False
+    for ch in line:
+        if ch == '\r':
+            continue
+        if ch == '.' and n == DP_AFTER and may_dp:
+            dp, may_dp = True, False
+            continue
+        if not FIRST <= ord(ch) <= LAST:
+            ch = ' '
+        parts = font.get(ch, [''])
+        if n + len(parts) > NCELLS:
+            break
+        for p in parts:
+            for s in p:
+                a, com = CELLS[n][s]
+                nib[a] |= 8 >> com
+            n += 1
+        may_dp = n == DP_AFTER and ch != ' '
+    if dp:
+        nib[DP[0]] |= 8 >> DP[1]
+    return nib
+
+
+def asm_bytes(label, data):
+    out = [f'{label}:']
+    for i in range(0, len(data), 16):
+        out.append('    .byte   ' + ', '.join(f'0x{b:02x}' for b in data[i:i + 16]))
+    return out
+
+
+def main():
+    font = load_font()
+    if sys.argv[1:] == ['asm']:
+        fnt, wide, wire = tables(font)
+        print('@ Generated by tools/story.py asm from', os.path.relpath(font_path()), '- do not edit.')
+        print(f'    .equ    STORY_NADDR, {NADDR:#x}')
+        print('.macro STORY_DATA')
+        print('\n'.join(asm_bytes('FONT', fnt) + asm_bytes('WIDE', wide) + asm_bytes('WIRE', wire)))
+        print('.endm')
+        return
+    for line in sys.argv[1:]:
+        nib = render(line, font)
+        print(f'{line!r}: ' + ' '.join(f'{a:02x}={v:x}' for a, v in enumerate(nib) if v))
+
+
+if __name__ == '__main__':
+    main()

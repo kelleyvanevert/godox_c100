@@ -104,7 +104,7 @@ VIDTIMING=${VIDTIMING:-0}
 VFX_PATCHES=""
 if [ "$VIDFX" = "1" ]; then
     VT=""; [ "$VIDTIMING" = "1" ] && VT="--defsym=VIDTIMING=1"
-    VCAVE=$(asm video_cave 0xbb774 0xbbc00 --defsym=LUT_FILL_ADDR=$(sym lut_fill) --defsym=PVARS_ADDR=$(sym VARS) --defsym=DRAW_TAG_ADDR=$(sym draw_tag) --defsym=FX_STRIP_ADDR=$(sym fx_strip) $VT)
+    VCAVE=$(asm video_cave 0xbb774 0xbbb08 --defsym=LUT_FILL_ADDR=$(sym lut_fill) --defsym=PVARS_ADDR=$(sym VARS) --defsym=DRAW_TAG_ADDR=$(sym draw_tag) --defsym=FX_STRIP_ADDR=$(sym fx_strip) $VT)
     VHOOK=$(asm vhook_jump 0x18d14 0x18d18 --defsym=HOOK=$($LLVM/llvm-nm build/obj/video_cave.o | awk '$3 == "vhook" { print "0x" $1 }'))
     VFX_PATCHES="$VCAVE $VHOOK"
 fi
@@ -120,14 +120,47 @@ fi
 # NORMAL_PATCHES below), redirecting the arrow keys' aspect change at 0x213e0
 # and the display's aspect bracket at 0x4a818 there too.
 LCDTAG=${LCDTAG:-1}
+STORY=${STORY:-1}
 LCD_PATCHES=""
 if [ "$LCDTAG" = "1" ]; then
-    LCAVE=$(asm lcd_cave 0xbc400 0xbc744)
+    LCAVE=$(asm lcd_cave 0xbc400 0xbc660)
     LJUMP=$(asm lcd_jump 0x21218 0x2121c --defsym=HOOK=$(nmsym lcd_cave lcd_hook))
     KJUMP=$(asm key_jump 0x1ddf8 0x1ddfc --defsym=HOOK=$(nmsym lcd_cave center_hook))
+    [ "$STORY" = "1" ] && KJUMP=""      # the story's center hook goes first, then center_hook
     AJUMP=$(asm aspect_jump 0x213e0 0x213e4 --defsym=HOOK=$(nmsym lcd_cave aspect_hook))
     BJUMP=$(asm bracket_jump 0x4a818 0x4a81c --defsym=HOOK=$(nmsym lcd_cave bracket_hook))
     LCD_PATCHES="$LCAVE $LJUMP $KJUMP $AJUMP $BJUMP"
+fi
+# A story on the display at startup (STORY=1, default; STORY=0 leaves it out):
+# STORY.TXT from the SD card root (none there: no story), one line at a time
+# on the ISO/F/SS cells, the right arrow and the shutter to the next line, the
+# left arrow back, until past the last. Font from story/font.json (STORY_FONT), see tools/story.py
+# and tools/patches/story_cave.s. Caves in the rest of the dead code: the
+# drawing at 0xba74c-0xba91c (dead FUN_000ba74c), the file at 0xbb340-0xbb3f8
+# (the end of the photo cave's dead function), the hooks at 0xbbb08-0xbbc00
+# (the end of the video cave's) and the font at 0xbc660-0xbc744 (the end of
+# the display cave's). Hooks: the card mount (bl at 0x3e03c), the refresh's
+# readouts (b at 0x213b8), the arrows' and center's posts (bl at 0x1dd44,
+# 0x1deac, 0x1ddf8) and the shutter (0x1dff8).
+STORY_PATCHES=""
+if [ "$STORY" = "1" ]; then
+    python3 -I tools/story.py asm > build/obj/story.inc
+    SDATA=$(asm story_data 0xbc660 0xbc744)
+    SCAVE=$(asm story_cave 0xba74c 0xba91c --defsym=FONT_ADDR=$(nmsym story_data FONT) \
+        --defsym=WIDE_ADDR=$(nmsym story_data WIDE) --defsym=PUT_ADDR=$(nmsym story_data put))
+    SVARS=$(nmsym story_cave VARS)
+    SLOAD=$(asm story_load 0xbb340 0xbb3f8 --defsym=VARS_ADDR=$SVARS --defsym=PATH_ADDR=$(nmsym story_cave PATH))
+    CENTER_NEXT=0x42c                   # the stock post, or with LCDTAG=1 center_hook
+    [ "$LCDTAG" = "1" ] && CENTER_NEXT=$(nmsym lcd_cave center_hook)
+    SHOOKS=$(asm story_hooks 0xbbb08 0xbbc00 --defsym=VARS_ADDR=$SVARS --defsym=CENTER_NEXT=$CENTER_NEXT \
+        --defsym=PREV_ADDR=$(nmsym story_cave story_prev) --defsym=DRAW_ADDR=$(nmsym story_cave draw))
+    hook() {  # hook b|bl AT LABEL: a branch at AT to a label of story_hooks / story_load
+        obj=story_hooks; [ "$3" = story_load ] && obj=story_load
+        asm "$1_jump" "$2" "$(printf '0x%x' $(($2 + 4)))" --defsym=AT=$2 --defsym=HOOK=$(nmsym $obj "$3")
+    }
+    STORY_PATCHES="$SDATA $SCAVE $SLOAD $SHOOKS $(hook bl 0x3e03c story_load) $(hook b 0x213b8 story_refresh)
+        $(hook bl 0x1dd44 story_left) $(hook bl 0x1deac story_right) $(hook bl 0x1ddf8 story_center)
+        $(hook b 0x1dff8 story_shutter)"
 fi
 # Resolution jump table @0xf3d0 (ldrls pc,[pc,idx,lsl#2] @0xf3c8): entries hold
 # absolute handler addresses, so point each photo aspect ratio straight at its
@@ -152,7 +185,7 @@ if [ "$SMALLVID" = "1" ]; then
         $(jt 0xf0a8 a8f60000 vid32) $(jt 0xf0ac 88f60000 vid43) $(jt 0xf0b0 98f60000 vid11)"
 fi
 python3 tools/patch_code.py "$OUT" "$OUT" \
-    "$HOOK_JUMP" "$CYC_JUMP" "$PDATA" "$CAVE" $VFX_PATCHES $LCD_PATCHES \
+    "$HOOK_JUMP" "$CYC_JUMP" "$PDATA" "$CAVE" $VFX_PATCHES $LCD_PATCHES $STORY_PATCHES \
     "$(jt 0xf3d0 9cf70000 stub169)" \
     "$(jt 0xf3d4 9cf70000 stub169)" \
     "$(jt 0xf3d8 b0f70000 stub32)" \

@@ -1,0 +1,546 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Story Maker</title>
+<style>
+:root {
+  --bg: #f4f3ef;
+  --surface: #ffffff;
+  --ink: #1c1d20;
+  --muted: #6b6d73;
+  --line: #dcdad3;
+  --accent: #2f6fdf;
+  --warn: #c2410c;
+  --current: #e8effc;
+  --sky-top: #4f93db;
+  --sky-bottom: #8cbcec;
+  --seg-on: #0b1826;
+  --seg-ghost: rgba(11, 24, 38, 0.08);
+  --seg-hover: rgba(11, 24, 38, 0.35);
+  --tile-bg: #eaf2fb;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #17181b;
+    --surface: #212328;
+    --ink: #e8e8ea;
+    --muted: #9a9ca3;
+    --line: #34363d;
+    --accent: #7aa7f5;
+    --warn: #fb923c;
+    --current: #26324a;
+    --tile-bg: #2a3442;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #17181b;
+  --surface: #212328;
+  --ink: #e8e8ea;
+  --muted: #9a9ca3;
+  --line: #34363d;
+  --accent: #7aa7f5;
+  --warn: #fb923c;
+  --current: #26324a;
+  --tile-bg: #2a3442;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font: 15px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+}
+.wrap { max-width: 1080px; margin: 0 auto; padding: 24px 16px 64px; }
+h1 { font-size: 22px; margin: 0 0 4px; }
+h2 { font-size: 15px; margin: 0 0 10px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+p.lede { margin: 0 0 20px; color: var(--muted); max-width: 70ch; }
+code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .92em; }
+
+/* The see-through display */
+.panel svg { display: block; width: 100%; height: auto; border-radius: 14px; }
+.digit polygon, .dp, .fixed polygon { fill: var(--seg-ghost); }
+.digit polygon.on, .dp.on { fill: var(--seg-on); }
+.editable .digit polygon { cursor: pointer; stroke: transparent; stroke-width: 3; pointer-events: all; }
+.editable .digit polygon:not(.on):hover { fill: var(--seg-hover); }
+.label { fill: var(--seg-ghost); }
+.label.box { fill: none; stroke: var(--seg-ghost); stroke-width: 2.5; }
+.labels-on .label { fill: var(--seg-on); }
+.labels-on .label.box { fill: none; stroke: var(--seg-on); }
+
+.status { display: flex; flex-wrap: wrap; gap: 6px 16px; align-items: baseline; margin: 10px 2px 0; min-height: 1.5em; }
+.status .count { font-variant-numeric: tabular-nums; }
+.status .warn { color: var(--warn); }
+.hint { color: var(--muted); font-size: 13px; }
+
+.controls { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; margin: 14px 0 22px; }
+button, .filebtn {
+  font: inherit; font-size: 14px;
+  padding: 6px 12px; border-radius: 8px;
+  border: 1px solid var(--line); background: var(--surface); color: var(--ink);
+  cursor: pointer;
+}
+button:hover, .filebtn:hover { border-color: var(--accent); }
+button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.filebtn input { display: none; }
+label.inline { display: inline-flex; gap: 6px; align-items: center; color: var(--muted); font-size: 14px; }
+input[type=number] { width: 4.5em; font: inherit; padding: 4px 6px; border-radius: 6px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); }
+
+h2 .saved { float: right; text-transform: none; letter-spacing: 0; font-weight: normal; font-size: 12px; }
+h2 .saved.off { color: var(--warn); }
+.cols { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 20px; }
+@media (max-width: 760px) { .cols { grid-template-columns: 1fr; } }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 14px; min-width: 0; }
+
+textarea {
+  width: 100%; min-height: 360px; resize: vertical;
+  font: 16px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace;
+  padding: 10px 12px; border-radius: 8px; border: 1px solid var(--line);
+  background: var(--bg); color: var(--ink);
+}
+textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+
+.lines { max-height: 420px; overflow-y: auto; margin: 0 -6px; }
+.row { display: grid; grid-template-columns: 2.2em 170px minmax(0, 1fr); gap: 10px; align-items: center; padding: 4px 6px; border-radius: 8px; cursor: pointer; }
+.row:hover { background: var(--bg); }
+.row.current { background: var(--current); }
+.row .num { color: var(--muted); font-size: 12px; text-align: right; font-variant-numeric: tabular-nums; }
+.row svg { width: 170px; height: auto; display: block; background: var(--tile-bg); border-radius: 5px; }
+.row .note { font-size: 12px; color: var(--warn); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.row .text { font: 13px ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--muted); white-space: pre; overflow: hidden; text-overflow: ellipsis; }
+
+.font { margin-top: 20px; }
+.fontgroup { margin: 14px 0 4px; font-size: 13px; color: var(--muted); }
+.tiles { display: flex; flex-wrap: wrap; gap: 6px; }
+.tile { position: relative; min-width: 52px; padding: 4px 4px 2px; border-radius: 8px; background: var(--tile-bg); text-align: center; }
+.tile svg { width: 44px; height: auto; display: block; margin: 0 auto; }
+.tile .ch { position: relative; font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--muted); }
+.tile .width { position: absolute; right: 0; bottom: 0; padding: 0 4px; font-size: 11px; line-height: 15px; border-radius: 4px; opacity: 0; }
+.tile:hover .width { opacity: 1; }
+.tile.changed::after { content: ""; position: absolute; top: 4px; right: 4px; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+.tile.dup .ch { color: var(--warn); }
+.tile.used { outline: 2px solid var(--accent); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Story maker</h1>
+  <p class="lede">Each line of the story is shown on the camera's 7 segment cells at the bottom of the display:
+    2 on ISO, 2 on F and 3 on SS. The line your cursor is on is shown below. Click a segment to change
+    the glyph for that character; the glyphs are listed at the bottom of the page, where <code>+</code> / <code>−</code> (on hover) spreads a glyph over two cells,
+    like W. A <code>.</code> right after the 3rd
+    character lights the F decimal point and takes no cell.</p>
+
+  <div class="panel" id="panel"></div>
+  <div class="status" id="status"></div>
+
+  <div class="controls">
+    <button class="primary" id="play">▶ Play</button>
+    <label class="inline">seconds per line <input type="number" id="secs" min="0.2" max="10" step="0.1" value="1.5"></label>
+    <label class="inline"><input type="checkbox" id="labels"> show the ISO / F / SS labels and boxes</label>
+    <span style="flex:1"></span>
+    <label class="filebtn">Open story.txt…<input type="file" id="open" accept=".txt,text/plain"></label>
+    <button id="save">Download story.txt</button>
+  </div>
+
+  <div class="cols">
+    <div class="card">
+      <h2>Story <span class="saved" id="saved"></span></h2>
+      <textarea id="text" spellcheck="false" autocomplete="off" autocapitalize="off"></textarea>
+      <div class="hint">One line per screen, at most 7 characters. An empty line blanks the display.</div>
+    </div>
+    <div class="card">
+      <h2>Lines</h2>
+      <div class="lines" id="lines"></div>
+    </div>
+  </div>
+
+  <div class="card font">
+    <h2>Font</h2>
+    <div class="hint">Click segments to edit a glyph. A blue dot marks a changed glyph; an orange character
+      looks the same as another one (hover for which). Changes are kept in this browser. The camera's font is
+      <code>story/font.json</code>: paste the copied JSON there and rebuild (<code>SILENT=1 sh tools/build.sh</code>).
+      Only ASCII characters can go in the firmware.</div>
+    <div id="fontgrid"></div>
+    <div class="controls" style="margin-bottom:0">
+      <button id="copyfont">Copy font as JSON</button>
+      <button id="resetfont">Reset font</button>
+      <span class="hint" id="fontmsg"></span>
+    </div>
+  </div>
+</div>
+
+<script>
+const SEGS = 'abcdefg';
+const NCELLS = 7;
+const DP_AFTER = 3;   // the F decimal point sits after the 3rd cell (F digit 1)
+
+// Default glyphs: segments a (top), b (top right), c (bottom right), d (bottom),
+// e (bottom left), f (top left), g (middle).
+const DEFAULT_FONT = {
+  '0': 'abcdef', '1': 'bc', '2': 'abdeg', '3': 'abcdg', '4': 'bcfg',
+  '5': 'acdfg', '6': 'acdefg', '7': 'abc', '8': 'abcdefg', '9': 'abcdfg',
+  A: 'abcefg', B: 'cdefg', C: 'adef', D: 'bcdeg', E: 'adefg', F: 'aefg', G: 'acdef',
+  H: 'bcefg', I: 'ef', J: 'bcde', K: 'acefg', L: 'def', M: 'abef|abcf', N: 'abcef',
+  O: 'abcdef', P: 'abefg', Q: 'abcfg', R: 'eg', S: 'acdfg', T: 'defg', U: 'bcdef',
+  V: 'bcdef', W: 'cdef|bcde', X: 'bcefg', Y: 'bcdfg', Z: 'abdeg',
+  a: 'abcdeg', b: 'cdefg', c: 'deg', d: 'bcdeg', e: 'abdefg', f: 'aefg', g: 'abcdfg',
+  h: 'cefg', i: 'c', j: 'bcd', k: 'acefg', l: 'ef', m: 'abef|abcf', n: 'ceg',
+  o: 'cdeg', p: 'abefg', q: 'abcfg', r: 'eg', s: 'acdfg', t: 'defg', u: 'cde',
+  v: 'cde', w: 'cdef|bcde', x: 'bcefg', y: 'bcdfg', z: 'abdeg',
+  '-': 'g', '_': 'd', '=': 'dg', "'": 'f', '"': 'bf', '[': 'adef', ']': 'abcd',
+  '(': 'adef', ')': 'abcd', '?': 'abeg', '°': 'abfg', '/': 'beg', '\\': 'cfg', '^': 'abf',
+};
+const GROUPS = [
+  ['Digits', '0123456789'],
+  ['Uppercase', 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'],
+  ['Lowercase', 'abcdefghijklmnopqrstuvwxyz'],
+  ['Punctuation', '-_=\'"[]()?°/\\^'],
+];
+const SAMPLE = 'HI\n  YOU\n\nLOOK\n  UP\n    AT\nTHE SKY\n';
+
+// ---- storage (per-browser convenience only) ----
+const store = {
+  ok: (() => { try { localStorage.setItem('storymaker.test', '1'); localStorage.removeItem('storymaker.test'); return true; } catch { return false; } })(),
+  get(k, d) { try { const v = localStorage.getItem('storymaker.' + k); return v === null ? d : JSON.parse(v); } catch { return d; } },
+  set(k, v) { try { localStorage.setItem('storymaker.' + k, JSON.stringify(v)); } catch {} },
+};
+let font = Object.assign({}, DEFAULT_FONT, store.get('font', {}));
+const normSegs = s => SEGS.split('').filter(c => s.includes(c)).join('');
+
+// ---- SVG ----
+const NS = 'http://www.w3.org/2000/svg';
+function el(tag, attrs, parent) {
+  const e = document.createElementNS(NS, tag);
+  for (const k in attrs) e.setAttribute(k, attrs[k]);
+  if (parent) parent.appendChild(e);
+  return e;
+}
+const SEG_PTS = (() => {
+  const xL = 3, xR = 31, yT = 3, yM = 30, yB = 57, h = 2.75, gp = 1.2;
+  const hs = (x0, x1, y) => [[x0 + gp, y], [x0 + gp + h, y - h], [x1 - gp - h, y - h], [x1 - gp, y], [x1 - gp - h, y + h], [x0 + gp + h, y + h]];
+  const vs = (x, y0, y1) => [[x, y0 + gp], [x + h, y0 + gp + h], [x + h, y1 - gp - h], [x, y1 - gp], [x - h, y1 - gp - h], [x - h, y0 + gp + h]];
+  const p = { a: hs(xL, xR, yT), b: vs(xR, yT, yM), c: vs(xR, yM, yB), d: hs(xL, xR, yB), e: vs(xL, yM, yB), f: vs(xL, yT, yM), g: hs(xL, xR, yM) };
+  for (const k in p) p[k] = p[k].map(q => q.map(n => +n.toFixed(2)).join(',')).join(' ');
+  return p;
+})();
+// One 7-segment digit, ~42 wide and 60 tall, italic like the camera's.
+function digit(parent, x, y, cls = 'digit') {
+  const g = el('g', { class: cls, transform: `translate(${x + 8},${y}) skewX(-8)` }, parent);
+  const segs = {};
+  for (const s of SEGS) segs[s] = el('polygon', { points: SEG_PTS[s], 'data-seg': s }, g);
+  return { g, segs };
+}
+
+// The full bottom row, laid out like the camera: ISO [c0][c1]00, F [c2].[c3], SS 1/ [c4][c5][c6]0.
+function buildPanel(host) {
+  const svg = el('svg', { viewBox: '0 0 1000 130', class: 'editable' }, host);
+  const defs = el('defs', {}, svg);
+  const grad = el('linearGradient', { id: 'sky', x1: 0, y1: 0, x2: 0, y2: 1 }, defs);
+  el('stop', { offset: 0, 'stop-color': 'var(--sky-top)' }, grad);
+  el('stop', { offset: 1, 'stop-color': 'var(--sky-bottom)' }, grad);
+  el('rect', { x: 0, y: 0, width: 1000, height: 130, fill: 'url(#sky)' }, svg);
+  const lab = (x, y, s, size = 20) => { const t = el('text', { x, y, class: 'label', 'font-size': size, 'font-family': 'Helvetica, Arial, sans-serif' }, svg); t.textContent = s; };
+  const box = (x, w) => el('rect', { x, y: 26, width: w, height: 78, rx: 6, class: 'label box' }, svg);
+  const cells = [];
+  // ISO
+  box(60, 236); lab(72, 93, 'ISO');
+  cells.push(digit(svg, 115, 35), digit(svg, 157, 35));
+  digit(svg, 199, 35, 'fixed'); digit(svg, 241, 35, 'fixed');
+  for (const f of svg.querySelectorAll('.fixed')) for (const p of f.children) if (p.dataset.seg === 'g') p.remove();
+  // F
+  box(435, 132); lab(447, 93, 'F');
+  cells.push(digit(svg, 467, 35));
+  const dp = el('circle', { cx: 506, cy: 92, r: 3.6, class: 'dp' }, svg);
+  cells.push(digit(svg, 513, 35));
+  // SS
+  box(694, 250); lab(706, 93, 'SS', 19); lab(738, 93, '1/', 19);
+  cells.push(digit(svg, 770, 35), digit(svg, 812, 35), digit(svg, 854, 35));
+  const z = digit(svg, 896, 35, 'fixed'); z.segs.g.remove();
+  cells.forEach((c, i) => { c.g.dataset.cell = i; });
+  return { svg, cells, dp };
+}
+// The compact version for the line list: the same 7 cells and decimal point, grouped 2 | 2 | 3.
+function buildMini(host) {
+  const svg = el('svg', { viewBox: '-8 -6 368 72' }, host);
+  const xs = [0, 42, 110, 156, 226, 268, 310];
+  const cells = xs.map(x => digit(svg, x, 0));
+  const dp = el('circle', { cx: 149, cy: 57, r: 3.6, class: 'dp' }, svg);
+  return { svg, cells, dp };
+}
+function paint(disp, lay) {
+  disp.cells.forEach((c, i) => {
+    const on = lay.cells[i] || '';
+    for (const s of SEGS) c.segs[s].classList.toggle('on', on.includes(s));
+  });
+  disp.dp.classList.toggle('on', lay.dp);
+}
+
+// ---- text -> cells ----
+// A glyph is one cell's segments, or several cells' joined by '|' (W is 'cdef|bcde').
+const parts = ch => (ch === ' ' ? '' : (font[ch] || '')).split('|');
+function layout(line) {
+  const cells = Array(NCELLS).fill(''), chars = Array(NCELLS).fill(' '), part = Array(NCELLS).fill(0);
+  let n = 0, dp = false;
+  const unknown = new Set(), extra = [];
+  for (const ch of line) {
+    if (ch === '.' && n === DP_AFTER && !dp && chars[DP_AFTER - 1] !== ' ') { dp = true; continue; }
+    const ps = parts(ch);
+    // Once a character doesn't fit, the rest of the line doesn't show either.
+    if (extra.length || n + ps.length > NCELLS) { extra.push(ch); continue; }
+    if (ch !== ' ' && !(ch in font)) unknown.add(ch);
+    ps.forEach((p, k) => { cells[n] = p; chars[n] = ch; part[n] = k; n++; });
+  }
+  return { cells, chars, part, dp, unknown, extra, used: n };
+}
+function problems(lay) {
+  const out = [];
+  if (lay.extra.length) out.push(`${lay.extra.length} too many: “${lay.extra.join('')}” won't show`);
+  if (lay.unknown.size) out.push(`no glyph for ${[...lay.unknown].map(c => c === '.' ? '. (only after the 3rd character)' : `“${c}”`).join(', ')}`);
+  return out;
+}
+
+// ---- state ----
+const ta = document.getElementById('text');
+const panel = buildPanel(document.getElementById('panel'));
+const statusEl = document.getElementById('status');
+const linesEl = document.getElementById('lines');
+let lines = [], current = 0, minis = [], playTimer = null;
+
+ta.value = store.get('text', SAMPLE);
+const savedEl = document.getElementById('saved');
+savedEl.textContent = store.ok ? 'kept in this browser' : 'not kept: this browser blocks storage here, download story.txt';
+savedEl.classList.toggle('off', !store.ok);
+document.getElementById('secs').value = store.get('secs', 1.5);
+const labelsBox = document.getElementById('labels');
+labelsBox.checked = store.get('labels', false);
+const applyLabels = () => panel.svg.classList.toggle('labels-on', labelsBox.checked);
+applyLabels();
+
+function cursorLine() {
+  const pos = ta.selectionDirection === 'backward' ? ta.selectionStart : ta.selectionEnd;
+  return ta.value.slice(0, pos).split('\n').length - 1;
+}
+function lineStart(i) {
+  let p = 0;
+  for (let k = 0; k < i; k++) p += lines[k].length + 1;
+  return p;
+}
+function goToLine(i, focus = true) {
+  const p = lineStart(i);
+  if (focus) ta.focus();
+  ta.setSelectionRange(p, p);
+  current = i;
+  showCurrent();
+}
+
+function rebuildLines() {
+  lines = ta.value.replace(/\r/g, '').split('\n');
+  // A trailing newline is not an extra screen.
+  if (lines.length > 1 && lines[lines.length - 1] === '') lines.pop();
+  linesEl.textContent = '';
+  minis = lines.map((line, i) => {
+    const row = document.createElement('div');
+    row.className = 'row';
+    const num = document.createElement('div');
+    num.className = 'num'; num.textContent = i + 1;
+    row.appendChild(num);
+    const mini = buildMini(row);
+    const info = document.createElement('div');
+    info.style.minWidth = 0;
+    const lay = layout(line);
+    paint(mini, lay);
+    const t = document.createElement('div');
+    t.className = 'text'; t.textContent = line === '' ? '(blank)' : line;
+    info.appendChild(t);
+    const p = problems(lay);
+    if (p.length) { const n = document.createElement('div'); n.className = 'note'; n.textContent = p.join(' · '); n.title = p.join('\n'); info.appendChild(n); }
+    row.appendChild(info);
+    row.addEventListener('mousedown', e => { e.preventDefault(); stop(); goToLine(i); });
+    linesEl.appendChild(row);
+    return row;
+  });
+}
+
+function showCurrent() {
+  current = Math.min(current, lines.length - 1);
+  const line = lines[current] ?? '';
+  const lay = layout(line);
+  paint(panel, lay);
+  panel.cells.forEach((c, i) => {
+    const ch = lay.chars[i];
+    c.g.dataset.ch = ch;
+    c.g.dataset.part = lay.part[i];
+    c.g.style.cursor = ch === ' ' ? 'default' : '';
+    c.g.querySelectorAll('polygon').forEach(p => { p.style.pointerEvents = ch === ' ' ? 'none' : ''; });
+  });
+  statusEl.textContent = '';
+  const add = (cls, txt) => { const s = document.createElement('span'); s.className = cls; s.textContent = txt; statusEl.appendChild(s); };
+  add('count', `Line ${current + 1} of ${lines.length} · ${lay.used}/${NCELLS} cells${lay.dp ? ' + decimal point' : ''}`);
+  for (const p of problems(lay)) add('warn', p);
+  minis.forEach((r, i) => r.classList.toggle('current', i === current));
+  const row = minis[current];
+  if (row) {
+    const top = row.offsetTop - linesEl.offsetTop, bottom = top + row.offsetHeight;
+    if (top < linesEl.scrollTop) linesEl.scrollTop = top;
+    else if (bottom > linesEl.scrollTop + linesEl.clientHeight) linesEl.scrollTop = bottom - linesEl.clientHeight;
+  }
+  markUsed(lay);
+}
+
+function refresh() { rebuildLines(); current = cursorLine(); showCurrent(); }
+function onCursor() { const c = cursorLine(); if (c !== current) { current = c; showCurrent(); } }
+
+ta.addEventListener('input', () => { store.set('text', ta.value); refresh(); });
+for (const ev of ['keyup', 'click', 'select', 'focus']) ta.addEventListener(ev, onCursor);
+document.addEventListener('selectionchange', () => { if (document.activeElement === ta) onCursor(); });
+ta.addEventListener('keydown', () => stop());
+
+// Clicking a segment on the big display edits that character's glyph.
+panel.svg.addEventListener('click', e => {
+  const seg = e.target.dataset && e.target.dataset.seg;
+  const g = e.target.closest && e.target.closest('[data-cell]');
+  if (!seg || !g || g.dataset.ch === ' ') return;
+  toggleSeg(g.dataset.ch, seg, +g.dataset.part);
+});
+
+// ---- font ----
+const fontGrid = document.getElementById('fontgrid');
+let tiles = {};
+function toggleSeg(ch, seg, k = 0) {
+  const ps = parts(ch);
+  ps[k] = normSegs(ps[k].includes(seg) ? ps[k].replace(seg, '') : ps[k] + seg);
+  setGlyph(ch, ps);
+}
+// One cell <-> two cells.
+function toggleWidth(ch) {
+  const ps = parts(ch);
+  setGlyph(ch, ps.length > 1 ? [ps[0]] : [ps[0], '']);
+}
+function setGlyph(ch, ps) {
+  font[ch] = ps.join('|');
+  saveFont();
+  buildFontGrid();
+  refresh();
+}
+function saveFont() {
+  const diff = {};
+  for (const k in font) if (font[k] !== DEFAULT_FONT[k]) diff[k] = font[k];
+  for (const k in DEFAULT_FONT) if (!(k in font)) diff[k] = '';
+  store.set('font', diff);
+}
+function buildFontGrid() {
+  fontGrid.textContent = '';
+  tiles = {};
+  const byGlyph = {};
+  for (const k in font) if (font[k]) (byGlyph[font[k]] ||= []).push(k);
+  const known = new Set(GROUPS.map(g => g[1]).join(''));
+  const others = Object.keys(font).filter(k => !known.has(k)).sort().join('');
+  const groups = others ? [...GROUPS, ['Other', others]] : GROUPS;
+  for (const [name, chars] of groups) {
+    const h = document.createElement('div');
+    h.className = 'fontgroup'; h.textContent = name;
+    fontGrid.appendChild(h);
+    const wrap = document.createElement('div');
+    wrap.className = 'tiles';
+    for (const ch of chars) {
+      const tile = document.createElement('div');
+      tile.className = 'tile';
+      const ps = parts(ch);
+      const svg = el('svg', { viewBox: `-2 -3 ${4 + 42 * ps.length} 66`, class: 'editable' }, tile);
+      svg.style.width = 44 * ps.length + 'px';
+      ps.forEach((p, k) => {
+        const d = digit(svg, 42 * k, 0);
+        for (const s of SEGS) {
+          d.segs[s].classList.toggle('on', p.includes(s));
+          d.segs[s].addEventListener('click', () => toggleSeg(ch, s, k));
+        }
+      });
+      const lab = document.createElement('div');
+      lab.className = 'ch'; lab.textContent = ch;
+      const w = document.createElement('button');
+      w.className = 'width';
+      w.textContent = ps.length > 1 ? '−' : '+';
+      w.title = ps.length > 1 ? `Draw ${ch} on one cell` : `Draw ${ch} over two cells`;
+      w.addEventListener('click', () => toggleWidth(ch));
+      lab.appendChild(w);
+      tile.appendChild(lab);
+      if ((font[ch] || '') !== (DEFAULT_FONT[ch] || '')) tile.classList.add('changed');
+      const same = (byGlyph[font[ch]] || []).filter(k => k !== ch && k.toLowerCase() !== ch.toLowerCase());
+      const twin = (byGlyph[font[ch]] || []).filter(k => k !== ch && k.toLowerCase() === ch.toLowerCase());
+      // Upper and lowercase sharing a glyph is expected; another character sharing it is worth knowing.
+      if (same.length) { tile.classList.add('dup'); tile.title = `${ch} looks the same as ${same.join(' ')}`; }
+      else if (!font[ch]) tile.title = `${ch} is blank`;
+      else tile.title = twin.length ? `${ch}: ${font[ch]} (same as ${twin.join(' ')})` : `${ch}: ${font[ch]}`;
+      wrap.appendChild(tile);
+      tiles[ch] = tile;
+    }
+    fontGrid.appendChild(wrap);
+  }
+}
+function markUsed(lay) {
+  const used = new Set(lay.chars.filter(c => c !== ' '));
+  for (const ch in tiles) tiles[ch].classList.toggle('used', used.has(ch));
+}
+const fontMsg = document.getElementById('fontmsg');
+document.getElementById('resetfont').addEventListener('click', () => {
+  if (!confirm('Reset every glyph to the default font?')) return;
+  font = Object.assign({}, DEFAULT_FONT);
+  saveFont(); buildFontGrid(); refresh();
+  fontMsg.textContent = 'Font reset.';
+});
+document.getElementById('copyfont').addEventListener('click', async () => {
+  const keys = Object.keys(font).filter(k => font[k]).sort();
+  const json = '{\n' + keys.map(k => `  ${JSON.stringify(k)}: ${JSON.stringify(font[k])}`).join(',\n') + '\n}\n';
+  try { await navigator.clipboard.writeText(json); fontMsg.textContent = `Copied ${keys.length} glyphs.`; }
+  catch { download('font.json', json); fontMsg.textContent = 'Clipboard unavailable, downloaded font.json instead.'; }
+});
+
+// ---- play ----
+const playBtn = document.getElementById('play');
+const secsIn = document.getElementById('secs');
+function stop() {
+  if (!playTimer) return;
+  clearInterval(playTimer); playTimer = null;
+  playBtn.textContent = '▶ Play';
+}
+playBtn.addEventListener('click', () => {
+  if (playTimer) return stop();
+  if (current >= lines.length - 1) goToLine(0, false);
+  playBtn.textContent = '■ Stop';
+  const secs = Math.max(0.2, +secsIn.value || 1.5);
+  playTimer = setInterval(() => {
+    if (current >= lines.length - 1) return stop();
+    goToLine(current + 1, false);
+  }, secs * 1000);
+});
+secsIn.addEventListener('change', () => store.set('secs', +secsIn.value || 1.5));
+labelsBox.addEventListener('change', () => { store.set('labels', labelsBox.checked); applyLabels(); });
+
+// ---- files ----
+function download(name, text) {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([text], { type: 'text/plain' }));
+  a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+document.getElementById('save').addEventListener('click', () => {
+  let text = ta.value.replace(/\r\n?/g, '\n');
+  if (!text.endsWith('\n')) text += '\n';
+  if (/[^\x00-\x7f]/.test(text) && !confirm('The story has non-ASCII characters (like °), which the camera may not read as one character. Download anyway?')) return;
+  download('story.txt', text);
+});
+document.getElementById('open').addEventListener('change', e => {
+  const f = e.target.files[0];
+  if (!f) return;
+  f.text().then(t => { ta.value = t.replace(/\r\n?/g, '\n'); store.set('text', ta.value); stop(); refresh(); goToLine(0); });
+  e.target.value = '';
+});
+
+buildFontGrid();
+refresh();
+</script>
+</body>
+</html>

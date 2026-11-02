@@ -2,9 +2,9 @@
 // display code), each on or off, rnd and the normal mode, tags on or off, photo sizes
 // and sounds; previewed on nine photos, kept in localStorage,
 // and built into a firmware in the browser (firmware.js) from the template.
-import { buildFirmware, configErrors, cropFor, encodeWav, hexToYuv, sha256, sortedRamp, sizeErrors, slotSamples, tagCells, tagColours, tagWidth, yuvToHex, yuvToRgb } from "./firmware.js?v=202610262311";
-import { paintColours } from "./films.js?v=202610262311";
-import { buildLut, cameraFrame, render } from "./sim.js?v=202610262311";
+import { buildFirmware, configErrors, cropFor, encodeWav, hexToYuv, sha256, sortedRamp, sizeErrors, slotSamples, tagCells, tagColours, tagWidth, yuvToHex, yuvToRgb } from "./firmware.js?v=202611021915";
+import { paintColours } from "./films.js?v=202611021915";
+import { buildLut, cameraFrame, render } from "./sim.js?v=202611021915";
 
 // this module's ?v= (tools/bump_site_version.sh), for the JSON it fetches
 const STAMP = new URL(import.meta.url).search;

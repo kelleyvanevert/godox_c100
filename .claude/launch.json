@@ -6,6 +6,12 @@
       "runtimeExecutable": "python3",
       "runtimeArgs": ["-m", "http.server", "4173", "--directory", "site"],
       "port": 4173
+    },
+    {
+      "name": "story",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": ["-m", "http.server", "4174", "--directory", "story"],
+      "port": 4174
     }
   ]
 }
