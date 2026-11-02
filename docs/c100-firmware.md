@@ -45,7 +45,7 @@ small resolution, a limited colour palette, and dithering.
 | [Normal mode](#the-normal-mode-no-effect) (`nor`, after rnd): no effect, the factory's sizes (`v023`) | on the camera, working (`v023`, 2026-10-26) |
 | [Contrast and brightness per preset](#contrast-and-brightness-per-preset) (a luma map, also 5 instructions per block less) | on the camera, working (`v023`, 2026-10-26) |
 | [Game Boy Camera settings](#game-boy-camera-settings) per look: ramp, Game Boy tone, 4×4 pixels, sharpening; GBC as the fourth built-in look; 6FP with 11 colours (`v024`) | on the camera, working (`v024`, 2026-10-26) |
-| [A story at startup](#a-story-at-startup) from `STORY.TXT` on the display's 7 cells, arrows and shutter to step (`v025`) | on the camera, working (`v025`, 2026-11-02) |
+| [A story at startup](#a-story-at-startup) from `STORY.TXT` on the display's 7 cells, arrows and shutter to step, nothing else on the display meanwhile (`v025`) | on the camera, working (`v025`, 2026-11-02) |
 
 Open: [repeated frames](#timing-and-headroom) in some dithered videos.
 
@@ -224,8 +224,9 @@ which shifts every address after them).
   BW. The site's default download until v025. Works on the camera (2026-10-26).
 - `v025_editor_template.bin` — v024 plus the [story at
   startup](#a-story-at-startup) (silent, `SILENT=1`). The current build, the
-  editor's template and the site's default download. Works on the camera
-  (2026-11-02).
+  editor's template and the site's default download. Nothing else shows on
+  the display during the story (the first v025 still showed the icons,
+  brackets and battery). Works on the camera (2026-11-02).
 
 ## Code caves and hooks
 
@@ -244,7 +245,7 @@ at `0x18d14` and returns to `0x18d18`).
 | `bl 0x42c` at `0x1ddf8` (post `0x7041`) | center button, once per press, peripheral task | `center_hook` | step the preset mode |
 | jump tables `0xf3d0`, `0xf0a0` | photo / video size setup | size stubs | 640-wide output |
 | `0x22b38`, `0x350f0`, `0x2ed50` | — | (NOPs) | speaker amp off |
-| `0x3e03c`, `0x213b8`, `0x1dd44`, `0x1deac`, `0x1ddf8`, `0x1dff8` | card mount, refresh, arrows, center, shutter | `story_*` | [the story at startup](#a-story-at-startup) |
+| `0x3e03c`, `0x21318`, `0x1dd44`, `0x1deac`, `0x1ddf8`, `0x1dff8` | card mount, refresh, arrows, center, shutter | `story_*` | [the story at startup](#a-story-at-startup) |
 
 **Photo cave** — dead `FUN_000bab6c`, `0xbab6c–0xbb340` (verified against all
 B/BL targets and pointers, ARM and Thumb):
@@ -1470,11 +1471,12 @@ line at a time on the 7 segment cells (ISO 1–2, F 1–2, SS 1–3), as
 shutter go to the next line, the left arrow back one (it stays on the first),
 the center button does nothing, and none of them do what they otherwise would
 (no photo, no recording, no aspect or preset change). Past the last line the
-story is over: the buffer is freed, the readouts are drawn at once as stock,
-and the camera simply is in the mode the switch set (photo, video or the
-readout state); it was there all along, underneath. The story runs in all
-three modes. The icons, brackets and battery are drawn as stock throughout;
-the ISO/F/SS labels and boxes and the fixed zeros are off.
+story is over: the buffer is freed, the whole display is drawn at once as
+stock, and the camera simply is in the mode the switch set (photo, video or
+the readout state); it was there all along, underneath. The story runs in
+all three modes. During it nothing else shows: no icons, brackets, battery,
+logo, labels or boxes, only the line (since the second `v025`, 2026-11-02;
+the first kept the icons, brackets and battery as stock).
 
 **The text.** One line per screen, at most 7 cells: a character per cell, W
 and M over two, unknown characters blank, and once a character doesn't fit,
@@ -1508,7 +1510,7 @@ the same).
 | Hook | Was | Story |
 |---|---|---|
 | `bl` at `0x3e03c` → `story_load` | `bl 0x37f34` (write `VERSION.TXT`), right after the card mount checked `TIME.TXT`/`FORMAT.TXT` in the storage task | the first time: `open("G:\STORY.TXT", 0)`, `malloc(4096)`, `read`, `close` (`0x9e608`, `0x53750`, `0x9e67c`, `0x9dc7c`, as the SD update uses them), then on to `VERSION.TXT` |
-| `b` at `0x213b8` → `story_refresh` | the refresh's last step, `b 0x21180` (ISO/F/SS readouts) | draw the line in their place (no stock readouts, so no flicker) |
+| `b` at `0x21318` → `story_refresh` | the display refresh's first instruction, `ldr r2, [pc, #0xac]` (`=0x1217be`); the refresh draws the readouts, and every other tick the icons and logo, the bracket and the battery | draw only the line and return: none of the stock drawing runs, so nothing else even flickers on |
 | `bl` at `0x1deac` / `0x1dd44` → `story_right` / `story_left` | the right / left arrow's post of `0x7043` / `0x7042` (after `0x7018`) | next / previous line, drawn at once |
 | `bl` at `0x1ddf8` → `story_center` | the center button's post, `0x7041` (with `LCDTAG=1` through `center_hook`) | nothing |
 | `b` at `0x1dff8` → `story_shutter` | `cmp r3, #2` in the shutter handler (`FUN_0001df64`, the "ok" key), just after its latch | next line, out through the handler's epilogue (`0x1e040`), posting nothing |
@@ -1516,10 +1518,15 @@ the same).
 The keys keep their stock debounce: the arrows' and center's latch
 `0x1217bc` (cleared by the timer `FUN_0001fdc8`) and the shutter's
 `0x12163d` (cleared by `FUN_0001fdfc`) are set before the hooks. `draw`
-writes HT1621 addresses `0x00`–`0x14` through `seg_write` (only what changed),
-keeping `06.0` (16:9 bracket) and `14.0` (video icon) as the firmware's copy
-has them, and always sends `0x14`: the icons routine sets the video icon only
-in the copy, and the SS routine the story skips is what sends it. The card
+writes all 25 HT1621 addresses through `seg_write`, all off but the line:
+every one the first time, after that only what differs from the firmware's
+copy (`SHADOW`). The firmware sometimes changes the copy before it sends
+(the icons routine sets the video icon `14.0` and the reticle `18.0` there,
+and a later routine sends them), so at the start the copy needn't be what
+the panel shows. Past the last line `story_next` runs one stock refresh at
+once, as an icon tick (`0x1217b0` = 1) and past its startup ticks
+(`0x1217be` = 1), and the icon, bracket and battery routines draw from their
+state every time, so everything is back at once. The card
 mount runs after the storage task's firmware-update check, so a story can't
 get in the way of re-flashing.
 
@@ -1529,7 +1536,7 @@ display caves where their code ends, which changes nothing without
 
 | Range | File | Contents |
 |---|---|---|
-| `0xba74c–0xba91c` | `story_cave.s` | `draw`, `story_prev`, `VARS` (`MEM`, `BUF`, `END`, `LINE`, `TRIED`), the path; dead `FUN_000ba74c` (no branch, pointer or `adr` into it) |
+| `0xba74c–0xba91c` | `story_cave.s` | `draw`, `story_prev`, `VARS` (`MEM`, `BUF`, `END`, `LINE`, `TRIED`, `SENT`), the path; dead `FUN_000ba74c` (no branch, pointer or `adr` into it) |
 | `0xbb340–0xbb3f8` | `story_load.s` | `story_load`; the end of the photo cave's dead `FUN_000bab6c` (full) |
 | `0xbbb08–0xbbc00` | `story_hooks.s` | the hooks, `story_next`; after the video cave (which ends at `0xbbb08` with `VIDTIMING=1`) |
 | `0xbc660–0xbc744` | `story_data.s` | `put`, `FONT`, `WIDE`, `WIRE`; after the display cave (2 B left) |
@@ -1543,12 +1550,13 @@ libm code with a Thumb branch into it from `0xc609c`).
 against `v024` side by side), in photo, video and the readout state: the
 mount reads the file once and goes on to `VERSION.TXT`, a second mount reads
 nothing; every line (W and M, the decimal point, a line too long, a blank
-line, `\r\n`, the byte order mark) lights exactly what `story.py` renders on
-`0x00`–`0x14`, and everything else is as stock; the right arrow, the shutter
+line, `\r\n`, the byte order mark) lights exactly what `story.py` renders,
+and nothing else, though the display was lit before (a stock refresh, the
+logo, and the battery bars lit with the copy saying off); the right arrow, the shutter
 and the left arrow step through the stock key handlers and redraw at once,
 posting only the arrows' `0x7018`; left stays on the first line, the center
 button does nothing and leaves the preset mode alone; past the last line the
-buffer is freed, the readouts are stock at once and then the keys are stock
+buffer is freed, the whole display is stock at once and then the keys are stock
 (the shutter posts its capture, the center button steps the preset). No
 file, an empty one or one with only a byte order mark: no story, nothing
 kept. The whole font, character by character, as `story.py` renders it.

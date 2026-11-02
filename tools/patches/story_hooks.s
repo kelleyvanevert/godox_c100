@@ -17,21 +17,28 @@
 @ in story mode step the story and leave through the handler's epilogue
 @ (0x1e040), posting nothing.
 @
-@ The display refresh (FUN_00021318) ends with b 0x21180, the readouts, at
-@ 0x213b8 (r0 = 1 in the readout state; r3-r5 and lr already restored):
-@ in story mode draw the line in their place.
+@ The display refresh (FUN_00021318, the peripheral task's periodic call)
+@ draws everything on the panel: the readouts, and every other tick the
+@ mode icons and logo, the aspect bracket and the battery. Its first
+@ instruction, ldr r2, [pc, #0xac] (=0x1217be, its startup flag), at
+@ 0x21318 comes here: in story mode draw only the line (draw clears the
+@ rest) and return, so nothing else even flickers on. When the story ends,
+@ story_next runs one stock refresh at once, as an icon tick and past the
+@ startup ticks, so the readouts, icons, bracket and battery are all back.
     .syntax unified
     .arm
 base:
     .set    MSG_POST,    base + 0x42c
     .set    SHUTTER_ON,  base + 0x1dffc   @ after the replaced cmp r3, #2
     .set    SHUTTER_OUT, base + 0x1e040   @ the shutter handler's epilogue
-    .set    READOUTS,    base + 0x21180   @ the stock readouts (r0 = 1 in the readout state)
+    .set    REFRESH,     base + 0x21318   @ the display refresh
+    .set    REFRESH_ON,  base + 0x2131c   @ after its replaced first instruction
     .set    FREE,        base + 0x53754   @ the firmware's free
     .set    PREV,        base + PREV_ADDR @ story_cave.s
     .set    DRAW,        base + DRAW_ADDR
     .set    CENTER,      base + CENTER_NEXT
-    .equ    UI_STATE,    0x121706         @ 0/1 = photo/video mode, 2 = readout
+    .equ    STARTED,     0x1217be         @ the refresh's flag: past its startup ticks
+    .equ    ICON_TICK,   0x1217b0         @ its tick counter: 1 = this tick draws the icons
     .equ    MEM, 0                        @ story_cave.s's VARS
     .equ    END, 8
     .equ    LINE, 12
@@ -68,15 +75,16 @@ story_shutter:                          @ r3 = the UI state
 1:  ldr     lr, =SHUTTER_OUT - base
     b       story_next
 
-story_refresh:                          @ r0 = the readouts' flag
+story_refresh:                          @ lr = the refresh's caller
     ldr     r12, =VARS_ADDR
     ldr     r12, [r12, #LINE]
     cmp     r12, #0
-    beq     READOUTS
-    b       DRAW
+    bne     DRAW
+    ldr     r2, =STARTED                  @ the instruction we replaced
+    b       REFRESH_ON
 
 @ The next line, or past the last one the end of the story: then free the
-@ text and draw the stock readouts at once. Keeps r4-r11.
+@ text and draw the stock display at once. Keeps r4-r11.
 story_next:
     ldr     r0, =VARS_ADDR
     ldr     r1, [r0, #LINE]
@@ -96,11 +104,10 @@ story_next:
     mov     lr, pc
     b       FREE
     pop     {r4, lr}
-    ldr     r0, =UI_STATE
-    ldrb    r0, [r0]
-    cmp     r0, #2
-    moveq   r0, #1
-    movne   r0, #0
-    b       READOUTS
+    ldr     r0, =ICON_TICK
+    mov     r1, #1
+    strb    r1, [r0]                      @ this refresh draws the icons too
+    strb    r1, [r0, #STARTED - ICON_TICK]
+    b       REFRESH
 
     .ltorg

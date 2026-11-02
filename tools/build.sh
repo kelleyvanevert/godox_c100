@@ -139,9 +139,10 @@ fi
 # drawing at 0xba74c-0xba91c (dead FUN_000ba74c), the file at 0xbb340-0xbb3f8
 # (the end of the photo cave's dead function), the hooks at 0xbbb08-0xbbc00
 # (the end of the video cave's) and the font at 0xbc660-0xbc744 (the end of
-# the display cave's). Hooks: the card mount (bl at 0x3e03c), the refresh's
-# readouts (b at 0x213b8), the arrows' and center's posts (bl at 0x1dd44,
-# 0x1deac, 0x1ddf8) and the shutter (0x1dff8).
+# the display cave's). Hooks: the card mount (bl at 0x3e03c), the display
+# refresh (b at its start, 0x21318: only the line, nothing else, during the
+# story), the arrows' and center's posts (bl at 0x1dd44, 0x1deac, 0x1ddf8)
+# and the shutter (0x1dff8).
 STORY_PATCHES=""
 if [ "$STORY" = "1" ]; then
     python3 -I tools/story.py asm > build/obj/story.inc
@@ -158,7 +159,7 @@ if [ "$STORY" = "1" ]; then
         obj=story_hooks; [ "$3" = story_load ] && obj=story_load
         asm "$1_jump" "$2" "$(printf '0x%x' $(($2 + 4)))" --defsym=AT=$2 --defsym=HOOK=$(nmsym $obj "$3")
     }
-    STORY_PATCHES="$SDATA $SCAVE $SLOAD $SHOOKS $(hook bl 0x3e03c story_load) $(hook b 0x213b8 story_refresh)
+    STORY_PATCHES="$SDATA $SCAVE $SLOAD $SHOOKS $(hook bl 0x3e03c story_load) $(hook b 0x21318 story_refresh)
         $(hook bl 0x1dd44 story_left) $(hook bl 0x1deac story_right) $(hook bl 0x1ddf8 story_center)
         $(hook b 0x1dff8 story_shutter)"
 fi

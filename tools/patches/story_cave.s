@@ -8,26 +8,23 @@
 @ arrow back one (not before the first), the center button does nothing;
 @ none of them do what they otherwise would. Past the last line the story
 @ is over and the camera is in the mode it was in all along (photo, video
-@ or the readout state, from the switch). Everything else (the icons, the
-@ brackets, the battery) is drawn as stock throughout.
+@ or the readout state, from the switch). Nothing else shows during the
+@ story (no icons, brackets, battery or logo); after it all of it is back.
 @
 @ story_load.s reads the file when the card is first mounted (once per
 @ power-on) into a buffer from the firmware's heap: MEM, BUF (the text,
 @ after a UTF-8 byte order mark), END, and LINE, the start of the line
 @ shown; LINE != 0 is story mode. story_hooks.s holds the hooks: the
-@ display refresh's last step, b 0x21180 (the ISO/F/SS readouts) at
-@ 0x213b8, draws the line instead in story mode, and the keys step it
-@ (story_next there, story_prev here).
+@ display refresh (at its start, 0x21318) only draws the line in story
+@ mode, and the keys step it (story_next there, story_prev here).
 @
-@ draw builds the nibbles for HT1621 addresses 0x00..0x14 (the readouts'
-@ cells, labels and boxes, the fixed zeros and the decimal point; all off
-@ but the line, lit by put in story_data.s) keeping the two segments there
-@ that aren't the readouts' as the firmware's copy (SHADOW) has them: 06.0,
-@ the 16:9 bracket, and 14.0, the video icon. It sends what changed through
-@ seg_write (0x49e34, which updates SHADOW), and address 0x14 always: the
-@ icons routine sets the video icon only in SHADOW, and the SS routine we
-@ skip is what sends it. All of it runs in the peripheral task, as the
-@ refresh and the key handlers do.
+@ draw builds the nibbles for all 25 HT1621 addresses, all off but the line
+@ (lit by put in story_data.s), and sends them through seg_write (0x49e34,
+@ which updates the firmware's copy, SHADOW): all of them the first time,
+@ after that what differs from SHADOW. (The firmware sometimes changes
+@ SHADOW before it sends, so the first time SHADOW needn't be what the
+@ panel shows.) All of it runs in the peripheral task, as the refresh and
+@ the key handlers do.
     .syntax unified
     .arm
     .include "story.inc"                  @ STORY_NADDR
@@ -40,29 +37,21 @@ base:
     .equ    END, 8                        @ its end
     .equ    LINE, 12                      @ the line shown, 0 = no story
     .equ    TRIED, 16                     @ (byte) 1 = looked for the file
+    .equ    SENT, 17                      @ (byte) 1 = drawn once, all addresses sent
 
     .org    0xba74c
 @ Draw the line at LINE (not 0). From the refresh hook (lr = the refresh's
 @ caller) and after a key. Keeps r4-r11.
 draw:
     push    {r4-r10, lr}
-    sub     sp, sp, #24                   @ [sp] = the nibbles for 0..STORY_NADDR-1
+    sub     sp, sp, #32                   @ [sp] = the nibbles for 0..STORY_NADDR-1
     mov     r0, #0
     mov     r1, #0
     mov     r2, #0
     mov     r3, #0
     stmia   sp, {r0-r3}
-    str     r0, [sp, #16]
-    str     r0, [sp, #20]
-    ldr     r1, =SHADOW
-    ldrb    r0, [r1, #0x06]
-    and     r0, r0, #8                    @ keep 06.0 (the 16:9 bracket)
-    strb    r0, [sp, #0x06]
-    ldrb    r0, [r1, #0x14]
-    and     r0, r0, #8                    @ keep 14.0 (the video icon)
-    strb    r0, [sp, #0x14]
-    mov     r0, #0xff                     @ and send it: the icons set it only in SHADOW,
-    strb    r0, [r1, #0x14]               @  the SS routine we skip sends it
+    add     r12, sp, #16
+    stmia   r12, {r0-r3}
     ldr     r4, =VARS - base
     ldr     r5, [r4, #LINE]               @ r5 = the next character
     ldr     r6, [r4, #END]
@@ -114,18 +103,22 @@ draw:
     cmp     r9, #0
     movne   r8, #1
     b       1b
-5:  mov     r7, #0                        @ send what changed
+5:  ldrb    r9, [r4, #SENT]           @ r9 = 0: send them all
+    mov     r0, #1
+    strb    r0, [r4, #SENT]
+    mov     r7, #0                        @ send what changed
     ldr     r8, =SHADOW
 7:  ldrb    r1, [sp, r7]
     ldrb    r0, [r8, r7]
     cmp     r0, r1
+    cmpeq   r9, #1
     movne   r0, r7
     movne   lr, pc
     bne     SEG_WRITE
     add     r7, r7, #1
     cmp     r7, #STORY_NADDR
     blo     7b
-    add     sp, sp, #24
+    add     sp, sp, #32
     pop     {r4-r10, pc}
 
 @ The line before, if there is one.
@@ -149,6 +142,6 @@ story_prev:
     .align  2
 VARS:
     .word   0, 0, 0, 0                    @ MEM, BUF, END, LINE
-    .byte   0, 0, 0, 0                    @ TRIED
+    .byte   0, 0, 0, 0                    @ TRIED, SENT
 PATH:                                   @ for story_load.s (out of room there)
     .asciz  "G:\\STORY.TXT"

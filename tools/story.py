@@ -32,11 +32,7 @@ CELLS = [
     {'a': (0x0f, 0), 'b': (0x10, 0), 'c': (0x11, 1), 'd': (0x11, 2), 'e': (0x10, 2), 'f': (0x0f, 1), 'g': (0x10, 1)},
     {'a': (0x12, 0), 'b': (0x13, 0), 'c': (0x13, 1), 'd': (0x13, 2), 'e': (0x12, 2), 'f': (0x11, 0), 'g': (0x12, 1)},
 ]
-NADDR = 0x15            # the story draws HT1621 addresses 0x00..0x14
-# Segments there that aren't the story's and stay as the firmware has them:
-# the 16:9 bracket (06.0) and the video icon (14.0). Everything else at
-# 0x00..0x14 (the ISO/F/SS labels and boxes, the fixed zeros, 14.1) is off.
-KEEP = {0x06: 8, 0x14: 8}
+NADDR = 0x19            # the story draws every HT1621 address: nothing but the line shows
 
 
 def font_path():
@@ -76,8 +72,8 @@ def tables(font):
 
 
 def render(line, font):
-    """The nibbles for addresses 0..NADDR-1 that show `line` (the KEEP bits
-    off), as the firmware draws it and story/maker.html shows it: one
+    """The nibbles for addresses 0..NADDR-1 that show `line` (and nothing
+    else), as the firmware draws it and story/maker.html shows it: one
     character per cell (two for a two-cell glyph), unknown ones blank, and
     once a character doesn't fit the rest of the line doesn't show either; a
     '.' right after the 3rd cell's character lights the decimal point instead.
