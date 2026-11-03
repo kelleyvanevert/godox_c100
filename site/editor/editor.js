@@ -2,9 +2,9 @@
 // display code), each on or off, rnd and the normal mode, tags on or off, photo sizes
 // and sounds; previewed on nine photos, kept in localStorage,
 // and built into a firmware in the browser (firmware.js) from the template.
-import { buildFirmware, configErrors, cropFor, encodeWav, hexToYuv, sha256, sortedRamp, sizeErrors, slotSamples, tagCells, tagColours, tagWidth, yuvToHex, yuvToRgb } from "./firmware.js?v=202611022009";
-import { paintColours } from "./films.js?v=202611022009";
-import { buildLut, cameraFrame, render } from "./sim.js?v=202611022009";
+import { buildFirmware, configErrors, cropFor, encodeWav, hexToYuv, sha256, sortedRamp, sizeErrors, slotSamples, tagCells, tagColours, tagWidth, yuvToHex, yuvToRgb } from "./firmware.js?v=202611032234";
+import { paintColours } from "./films.js?v=202611032234";
+import { buildLut, cameraFrame, render } from "./sim.js?v=202611032234";
 
 // this module's ?v= (tools/bump_site_version.sh), for the JSON it fetches
 const STAMP = new URL(import.meta.url).search;
@@ -1326,7 +1326,8 @@ function downloadProps() {
 let template;
 async function getTemplate() {
   if (template) return template;
-  const bytes = new Uint8Array(await (await fetch(`editor/${m.file}`)).arrayBuffer());
+  // revalidated: a template can be replaced under the same name (v025 was)
+  const bytes = new Uint8Array(await (await fetch(`editor/${m.file}`, { cache: "no-cache" })).arrayBuffer());
   if ((await sha256(bytes)) !== m.sha256) throw new Error("the template firmware isn't the expected one");
   return (template = bytes);
 }

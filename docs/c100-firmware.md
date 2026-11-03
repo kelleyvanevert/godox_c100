@@ -225,8 +225,12 @@ which shifts every address after them).
 - `v025_editor_template.bin` — v024 plus the [story at
   startup](#a-story-at-startup) (silent, `SILENT=1`). The current build, the
   editor's template and the site's default download. Nothing else shows on
-  the display during the story (the first v025 still showed the icons,
-  brackets and battery). Works on the camera (2026-11-02).
+  the display during the story, and the center button skips the rest of it
+  (2026-11-03; replaced in place twice: the first v025 still showed the
+  icons, brackets and battery, the second had the center button do
+  nothing). Those worked on the camera (2026-11-02); this one is verified in
+  the emulator. The editor revalidates the template (`cache: "no-cache"`),
+  so a browser that has an older v025 cached fetches the new one.
 
 ## Code caves and hooks
 
@@ -1469,14 +1473,15 @@ leaves the feature out, and the build is then exactly `v024`), the camera shows 
 line at a time on the 7 segment cells (ISO 1–2, F 1–2, SS 1–3), as
 [`story/maker.html`](../story/maker.html) shows it. The right arrow and the
 shutter go to the next line, the left arrow back one (it stays on the first),
-the center button does nothing, and none of them do what they otherwise would
-(no photo, no recording, no aspect or preset change). Past the last line the
-story is over: the buffer is freed, the whole display is drawn at once as
+the center button skips the rest of the story, and none of them do what they
+otherwise would (no photo, no recording, no aspect or preset change). Past
+the last line, or after the center button, the story is over: the buffer is freed, the whole display is drawn at once as
 stock, and the camera simply is in the mode the switch set (photo, video or
 the readout state); it was there all along, underneath. The story runs in
 all three modes. During it nothing else shows: no icons, brackets, battery,
-logo, labels or boxes, only the line (since the second `v025`, 2026-11-02;
-the first kept the icons, brackets and battery as stock).
+logo, labels or boxes, only the line. (`v025` was replaced twice under the
+same name, on 2026-11-02 and -03: the first kept the icons, brackets and
+battery as stock, the second had the center button do nothing.)
 
 **The text.** One line per screen, at most 7 cells: a character per cell, W
 and M over two, unknown characters blank, and once a character doesn't fit,
@@ -1512,7 +1517,7 @@ the same).
 | `bl` at `0x3e03c` → `story_load` | `bl 0x37f34` (write `VERSION.TXT`), right after the card mount checked `TIME.TXT`/`FORMAT.TXT` in the storage task | the first time: `open("G:\STORY.TXT", 0)`, `malloc(4096)`, `read`, `close` (`0x9e608`, `0x53750`, `0x9e67c`, `0x9dc7c`, as the SD update uses them), then on to `VERSION.TXT` |
 | `b` at `0x21318` → `story_refresh` | the display refresh's first instruction, `ldr r2, [pc, #0xac]` (`=0x1217be`); the refresh draws the readouts, and every other tick the icons and logo, the bracket and the battery | draw only the line and return: none of the stock drawing runs, so nothing else even flickers on |
 | `bl` at `0x1deac` / `0x1dd44` → `story_right` / `story_left` | the right / left arrow's post of `0x7043` / `0x7042` (after `0x7018`) | next / previous line, drawn at once |
-| `bl` at `0x1ddf8` → `story_center` | the center button's post, `0x7041` (with `LCDTAG=1` through `center_hook`) | nothing |
+| `bl` at `0x1ddf8` → `story_center` | the center button's post, `0x7041` (with `LCDTAG=1` through `center_hook`) | the end of the story (`story_end`, as past the last line), posting nothing |
 | `b` at `0x1dff8` → `story_shutter` | `cmp r3, #2` in the shutter handler (`FUN_0001df64`, the "ok" key), just after its latch | next line, out through the handler's epilogue (`0x1e040`), posting nothing |
 
 The keys keep their stock debounce: the arrows' and center's latch
@@ -1555,7 +1560,7 @@ and nothing else, though the display was lit before (a stock refresh, the
 logo, and the battery bars lit with the copy saying off); the right arrow, the shutter
 and the left arrow step through the stock key handlers and redraw at once,
 posting only the arrows' `0x7018`; left stays on the first line, the center
-button does nothing and leaves the preset mode alone; past the last line the
+button ends the story from any line and leaves the preset mode alone; past the last line the
 buffer is freed, the whole display is stock at once and then the keys are stock
 (the shutter posts its capture, the center button steps the preset). No
 file, an empty one or one with only a byte order mark: no story, nothing

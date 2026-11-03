@@ -6,9 +6,10 @@
 @ FUN_0001de20 right arrow) each post 0x7018 and then their own message,
 @ once per press (latch 0x1217bc, cleared by the timer FUN_0001fdc8). Their
 @ second post (bl MSG_POST at 0x1dd44, 0x1ddf8, 0x1deac) comes here; in
-@ story mode it steps the story instead and returns into the handler.
-@ The center one goes on to CENTER_NEXT, lcd_cave.s's center_hook (or the
-@ stock post with LCDTAG=0).
+@ story mode the arrows step the story instead and the center button ends
+@ it at once, then they return into the handler. Otherwise the center one
+@ goes on to CENTER_NEXT, lcd_cave.s's center_hook (or the stock post with
+@ LCDTAG=0).
 @
 @ The shutter (FUN_0001df64, the "ok" key) sets its own latch (0x12163d,
 @ cleared by the timer FUN_0001fdfc) and then, by the UI state, posts the
@@ -63,7 +64,8 @@ story_center:
     ldr     r12, [r12, #LINE]
     cmp     r12, #0
     beq     CENTER
-    mov     pc, lr
+    ldr     r0, =VARS_ADDR                @ story mode: skip the rest of it
+    b       story_end
 
 story_shutter:                          @ r3 = the UI state
     ldr     r12, =VARS_ADDR
@@ -83,8 +85,9 @@ story_refresh:                          @ lr = the refresh's caller
     ldr     r2, =STARTED                  @ the instruction we replaced
     b       REFRESH_ON
 
-@ The next line, or past the last one the end of the story: then free the
-@ text and draw the stock display at once. Keeps r4-r11.
+@ The next line, or past the last one the end of the story (story_end, also
+@ the center button's): then free the text and draw the stock display at
+@ once. Keeps r4-r11.
 story_next:
     ldr     r0, =VARS_ADDR
     ldr     r1, [r0, #LINE]
@@ -97,8 +100,10 @@ story_next:
     cmp     r1, r2
     strlo   r1, [r0, #LINE]
     blo     DRAW
-2:  mov     r1, #0
-    str     r1, [r0, #LINE]               @ the story is over
+2:
+story_end:                              @ (r0 = VARS) the story is over
+    mov     r1, #0
+    str     r1, [r0, #LINE]
     push    {r4, lr}
     ldr     r0, [r0, #MEM]
     mov     lr, pc

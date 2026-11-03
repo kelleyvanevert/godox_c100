@@ -5,8 +5,8 @@
 @ under SS, as story/maker.html shows it: a character per cell (W and M
 @ over two), and a '.' right after the 3rd character lights the F decimal
 @ point. The right arrow and the shutter go to the next line, the left
-@ arrow back one (not before the first), the center button does nothing;
-@ none of them do what they otherwise would. Past the last line the story
+@ arrow back one (not before the first), and the center button skips the
+@ rest of the story; none of them do what they otherwise would. Past the last line the story
 @ is over and the camera is in the mode it was in all along (photo, video
 @ or the readout state, from the switch). Nothing else shows during the
 @ story (no icons, brackets, battery or logo); after it all of it is back.

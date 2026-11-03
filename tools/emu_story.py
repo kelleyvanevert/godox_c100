@@ -9,7 +9,7 @@ handlers: each line must light exactly what tools/story.py render() says
 (the reference for story/maker.html too) and nothing else on the panel,
 even what was lit before the story; the right arrow and the
 shutter step forward and the left arrow back without posting their stock
-messages, the center button does nothing; past the last line the buffer is
+messages, the center button skips the rest; past the last line (or then) the buffer is
 freed and the display and keys are stock again. Also: no file, an empty
 file, a second mount (no reload), and the readout state.
 
@@ -166,7 +166,7 @@ if __name__ == '__main__':
         shows(uc, lcd, state, lines[0], f'{mode} line 1')
         check(f'{mode}: left on the first line posts only 0x7018', press(uc, card, LEFT, state), ['0x7018'])
         shows(uc, lcd, state, lines[0], f'{mode} still line 1')
-        steps = [(RIGHT, 1, ['0x7018']), (SHUTTER, 1, []), (CENTER, 0, ['0x7018']), (LEFT, -1, ['0x7018']),
+        steps = [(RIGHT, 1, ['0x7018']), (SHUTTER, 1, []), (LEFT, -1, ['0x7018']),
                  (RIGHT, 1, ['0x7018']), (SHUTTER, 1, []), (RIGHT, 1, ['0x7018']), (RIGHT, 1, ['0x7018'])]
         for key, step, posts in steps:
             name = {LEFT: 'left', RIGHT: 'right', SHUTTER: 'shutter', CENTER: 'center'}[key]
@@ -190,6 +190,21 @@ if __name__ == '__main__':
         sh = press(uc, card, SHUTTER, state)
         check(f'{mode}: after the story the shutter posts as stock',
               sh, ['0x7018', '0x703d'] if state == 2 else ['0x7015', '0x7001'])
+
+    # The center button skips the rest of the story, from any line.
+    for state, mode in ((0, 'photo'), (1, 'video'), (2, 'readout')):
+        uc, lcd, card = boot(FW, b'ONE\nTWO\nTHREE\n')
+        started(uc, lcd, state)
+        press(uc, card, RIGHT, state)
+        shows(uc, lcd, state, 'TWO', f'center, {mode}: line 2')
+        check(f'center, {mode}: the center button posts only 0x7018', press(uc, card, CENTER, state), ['0x7018'])
+        check(f'center, {mode}: the story is over, the buffer freed', (word(uc, 12), card.freed), (0, [word(uc, 0)]))
+        check(f'center, {mode}: the stock display at once', masked(lcd.ram[:E.NIB]), stock_view(state))
+        check(f'center, {mode}: the preset mode unchanged', uc.mem_read(CFG + 0xf1, 1)[0], 0)
+        check(f'center, {mode}: then the right arrow posts as stock', press(uc, card, RIGHT, state), ['0x7018', '0x7043'])
+        if state < 2:
+            check(f'center, {mode}: and the center button steps the preset', (press(uc, card, CENTER, state), uc.mem_read(CFG + 0xf1, 1)[0]),
+                  (['0x7018', '0x7041'], 1))
 
     # The shutter on the last line ends it too.
     uc, lcd, card = boot(FW, b'ONE\nTWO\n')
